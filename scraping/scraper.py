@@ -35,6 +35,7 @@ from scraping.koyfin_helpers import (
     exists,
     accept_cookies_if_present,
     ensure_earnings_calls_only,
+    earnings_calls_is_selected,
     scroll_first_results_list_to_bottom,
     get_bottom_search_row,
     get_search_row_title,
@@ -92,7 +93,7 @@ class KoyfinScraper:
         self.driver.get(TARGET_URL)
         self.base_wait.until(lambda x: "login" not in x.current_url.lower())
         accept_cookies_if_present(self.driver)
-        ensure_earnings_calls_only(self.driver, self.base_wait)
+        ensure_earnings_calls_only(self.driver, self.base_wait, self.logger)
 
     def run_one_period(self, start_date, end_date, results, first_run=False):
         self.logger.info(f"period_start | start={start_date} | end={end_date}")
@@ -101,6 +102,12 @@ class KoyfinScraper:
             self.driver.get(TARGET_URL)
             self.base_wait.until(lambda x: "login" not in x.current_url.lower())
             accept_cookies_if_present(self.driver)
+
+            if not earnings_calls_is_selected(self.driver):
+                self.logger.warning(
+                    f"earnings_calls_was_unchecked | start={start_date} | end={end_date}"
+                )
+                ensure_earnings_calls_only(self.driver, self.base_wait, self.logger)
 
         self.base_wait.until(EC.element_to_be_clickable(DATE_BOX_SEL)).click()
         self.base_wait.until(

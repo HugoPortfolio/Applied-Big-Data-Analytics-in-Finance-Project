@@ -22,7 +22,6 @@ from scraping.selectors import (
     ARTICLE_ROOT_SEL,
     ARTICLE_TITLE_SEL,
     ARTICLE_BODY_SEL,
-    EARNINGS_CALLS_FILTER_SEL,
     DATE_INP_CSS,
 )
 
@@ -88,6 +87,14 @@ def is_filter_selected(driver, el):
     return driver.execute_script(
         """
         const node = arguments[0];
+        const root = node.closest('[role="button"]') || node;
+
+        const candidates = [
+            root,
+            node,
+            root.querySelector("span[data-theme='active']"),
+            root.querySelector("[data-theme='active']")
+        ].filter(Boolean);
 
         const attrs = [
             "aria-pressed",
@@ -98,19 +105,24 @@ def is_filter_selected(driver, el):
             "aria-checked"
         ];
 
-        for (const a of attrs) {
-            const v = node.getAttribute(a);
-            if (v === "true") return true;
+        for (const c of candidates) {
+            for (const a of attrs) {
+                const v = c.getAttribute(a);
+                if (v === "true") return true;
+            }
+
+            const cls = (c.className || "").toLowerCase();
+            if (
+                cls.includes("selected") ||
+                cls.includes("active") ||
+                cls.includes("checked")
+            ) {
+                return true;
+            }
         }
 
-        const cls = (node.className || "").toLowerCase();
-        if (
-            cls.includes("selected") ||
-            cls.includes("active") ||
-            cls.includes("checked")
-        ) {
-            return true;
-        }
+        const activeIcon = root.querySelector("span[data-theme='active'], [data-theme='active']");
+        if (activeIcon) return true;
 
         return false;
         """,
@@ -118,16 +130,63 @@ def is_filter_selected(driver, el):
     )
 
 
-def ensure_earnings_calls_only(driver, base_wait):
-    btn = base_wait.until(EC.presence_of_element_located(EARNINGS_CALLS_FILTER_SEL))
+def earnings_calls_is_selected(driver):
+    try:
+        buttons = driver.find_elements(
+            By.XPATH,
+            "//div[@role='button' and .//label[normalize-space()='Earnings Calls']]"
+        )
+
+        for btn in buttons:
+            try:
+                if btn.is_displayed():
+                    return is_filter_selected(driver, btn)
+            except StaleElementReferenceException:
+                continue
+    except Exception:
+        pass
+
+    return False
+
+
+def ensure_earnings_calls_only(driver, base_wait, logger=None):
+    buttons = base_wait.until(
+        lambda drv: drv.find_elements(
+            By.XPATH,
+            "//div[@role='button' and .//label[normalize-space()='Earnings Calls']]"
+        )
+    )
+
+    btn = None
+    for candidate in buttons:
+        try:
+            if candidate.is_displayed():
+                btn = candidate
+                break
+        except StaleElementReferenceException:
+            continue
+
+    if btn is None:
+        if logger is not None:
+            logger.warning("earnings_calls_button_not_found")
+        return False
+
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
 
-    if not is_filter_selected(driver, btn):
-        js_click(driver, btn)
-        try:
-            wait(driver, 2).until(lambda drv: is_filter_selected(drv, btn))
-        except TimeoutException:
-            pass
+    if earnings_calls_is_selected(driver):
+        return True
+
+    js_click(driver, btn)
+
+    try:
+        wait(driver, 2).until(lambda drv: earnings_calls_is_selected(drv))
+        if logger is not None:
+            logger.info("earnings_calls_selected")
+        return True
+    except TimeoutException:
+        if logger is not None:
+            logger.warning("earnings_calls_selection_not_confirmed")
+        return False
 
 
 def row_top_from_style(row):
@@ -184,39 +243,81 @@ def click_search_row(driver, row):
 
 def scroll_first_results_list_to_bottom(driver, base_wait, logger):
     box = base_wait.until(lambda drv: drv.find_element(By.CSS_SELECTOR, SEARCH_LIST_BOX_SEL))
-    step = 1000
-    pause = 1
-    max_idle = 10
-    idle = 0
-    prev_top = -1
 
-    while idle < max_idle:
+    step = 1200
+    scroll_pause = 0.2
+    bottom_wait = 0.35
+    stable_passes = 0
+    stable_needed = 2
+    last_bottom_title = ""
+    last_scroll_height = -1
+
+    while stable_passes < stable_needed:
         try:
+            rows_before = get_real_search_rows(driver)
+            bottom_row_before = get_bottom_search_row(driver, retries=1)
+            bottom_title_before = get_search_row_title(bottom_row_before) if bottom_row_before else ""
+
             top, h, ch = driver.execute_script(
                 "const e=arguments[0]; return [e.scrollTop, e.scrollHeight, e.clientHeight];",
                 box
             )
 
-            if top + ch >= h - 5:
-                logger.info("search_list_bottom_reached")
-                return
+            near_bottom = top + ch >= h - 20
 
-            driver.execute_script(
-                "arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
-                box, step
-            )
-            time.sleep(pause)
-
-            new_top = driver.execute_script("return arguments[0].scrollTop;", box)
-            if new_top == prev_top:
-                idle += 1
+            if near_bottom:
+                time.sleep(bottom_wait)
             else:
-                idle = 0
-            prev_top = new_top
+                driver.execute_script(
+                    "arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
+                    box,
+                    step
+                )
+                time.sleep(scroll_pause)
+
+            try:
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('scroll'));",
+                    box
+                )
+            except Exception:
+                pass
+
+            try:
+                box = base_wait.until(lambda drv: drv.find_element(By.CSS_SELECTOR, SEARCH_LIST_BOX_SEL))
+            except Exception:
+                pass
+
+            rows_after = get_real_search_rows(driver)
+            bottom_row_after = get_bottom_search_row(driver, retries=1)
+            bottom_title_after = get_search_row_title(bottom_row_after) if bottom_row_after else ""
+
+            top2, h2, ch2 = driver.execute_script(
+                "const e=arguments[0]; return [e.scrollTop, e.scrollHeight, e.clientHeight];",
+                box
+            )
+
+            something_changed = (
+                bottom_title_after != bottom_title_before
+                or bottom_title_after != last_bottom_title
+                or h2 != last_scroll_height
+                or len(rows_after) != len(rows_before)
+                or top2 != top
+            )
+
+            if something_changed:
+                stable_passes = 0
+            else:
+                stable_passes += 1
+
+            last_bottom_title = bottom_title_after
+            last_scroll_height = h2
 
         except StaleElementReferenceException:
-            time.sleep(0.8)
+            time.sleep(0.2)
             box = base_wait.until(lambda drv: drv.find_element(By.CSS_SELECTOR, SEARCH_LIST_BOX_SEL))
+
+    logger.info("search_list_bottom_reached")
 
 
 def wait_split_view(driver):
