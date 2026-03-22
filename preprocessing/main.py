@@ -5,14 +5,17 @@ from config import (
     PARQUET_PATTERN,
     SEGMENTS_OUTPUT_PATH,
     VALIDATION_OUTPUT_PATH,
+    TICKER_METADATA_PATH,
 )
 from data_io import (
     load_koyfin_parquets,
+    load_ticker_metadata,
     save_segments,
     save_validation,
 )
 from parsing import build_segments_and_trace
 from labeling import add_section_labels
+from enrichment import enrich_with_ticker_metadata
 from validation import build_validation_df
 
 
@@ -38,6 +41,39 @@ def print_summary(raw_count, df_segments, df_validation, bad_file):
             "\nSection counts:\n%s",
             df_segments["section"].value_counts(dropna=False).to_string(),
         )
+
+        # Segment-level metadata match count
+        matched_segments = df_segments["ticker"].notna().sum() if "ticker" in df_segments.columns else 0
+        logger.info("Segments with ticker metadata match: %s", matched_segments)
+
+        # Company-level metadata match count
+        company_merge_stats = (
+            df_segments[["company_name", "ticker"]]
+            .dropna(subset=["company_name"])
+            .drop_duplicates()
+            .assign(has_ticker=lambda x: x["ticker"].notna())
+            .groupby("company_name", as_index=False)["has_ticker"]
+            .max()
+        )
+
+        n_companies_total = len(company_merge_stats)
+        n_companies_matched = int(company_merge_stats["has_ticker"].sum())
+        n_companies_missing = n_companies_total - n_companies_matched
+
+        logger.info("Distinct companies          : %s", n_companies_total)
+        logger.info("Companies matched to ticker : %s", n_companies_matched)
+        logger.info("Companies missing ticker    : %s", n_companies_missing)
+
+        missing_companies = (
+            company_merge_stats.loc[~company_merge_stats["has_ticker"], "company_name"]
+            .sort_values()
+        )
+
+        if not missing_companies.empty:
+            logger.info(
+                "\nSample missing companies:\n%s",
+                missing_companies.head(20).to_string(index=False),
+            )
 
     if df_validation.empty:
         logger.warning("Validation dataframe is empty.")
@@ -75,7 +111,7 @@ def print_summary(raw_count, df_segments, df_validation, bad_file):
 
 
 def main():
-    logger.info("Loading raw parquet shards...")
+    logger.info("Loading curated transcript parquet...")
     df_raw, bad_file = load_koyfin_parquets(INPUT_DIR, PARQUET_PATTERN)
 
     logger.info("Building speaker-level segments...")
@@ -83,6 +119,12 @@ def main():
 
     logger.info("Applying section labels...")
     df_segments = add_section_labels(df_segments)
+
+    logger.info("Loading ticker metadata...")
+    df_metadata = load_ticker_metadata(TICKER_METADATA_PATH)
+
+    logger.info("Merging company metadata...")
+    df_segments = enrich_with_ticker_metadata(df_segments, df_metadata)
 
     logger.info("Running validation...")
     df_validation = build_validation_df(df_segments, df_trace)

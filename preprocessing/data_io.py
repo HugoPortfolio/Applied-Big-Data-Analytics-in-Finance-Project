@@ -29,6 +29,12 @@ def load_koyfin_parquets(input_dir, pattern):
     return pd.concat(good_dfs, ignore_index=True), bad_file
 
 
+def load_ticker_metadata(path):
+    if not path.exists():
+        raise FileNotFoundError(f"Ticker metadata file not found: {path}")
+    return pd.read_parquet(path)
+
+
 def save_segments(df_segments, output_path):
     df_segments.to_parquet(output_path, index=False)
 

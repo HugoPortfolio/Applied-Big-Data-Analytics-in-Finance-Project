@@ -19,7 +19,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # CREDENTIALS
-EMAIL = "ftd2026_user.fjifdidf@outlook.com"
+EMAIL = "ftd2026_user.fjifdidfdz@outlook.com" #adapt with your email and password
 PWD = "ftd2026_pwd"
 
 
@@ -33,7 +33,7 @@ TARGET_URL = "https://app.koyfin.com/search/transcripts"
 
 
 # GLOBAL PERIOD TO COVER
-GLOBAL_START = "02/16/2026"
+GLOBAL_START = "08/01/2017"
 GLOBAL_END = "02/28/2026"
 
 
@@ -44,8 +44,8 @@ WINDOW_DAYS = 1
 
 
 # WAITS / RETRIES
-DEFAULT_WAIT = 6
-CLICK_WAIT = 1.5
+DEFAULT_WAIT = 5
+CLICK_WAIT = 1.4
 READY_WAIT = 1.2
 POLL = 0.01
 RETRY_COUNT = 1
@@ -63,7 +63,7 @@ PLACEHOLDER_TEXTS = [
 
 
 # PARQUET WRITING
-SHARD_SIZE = 2000
-WRITE_BATCH_SIZE = 500
+SHARD_SIZE = 30000
+WRITE_BATCH_SIZE = 100
 SHARD_PREFIX = "koyfin_transcripts"
 SHARD_DIR = RAW_DATA_DIR
