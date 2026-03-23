@@ -14,7 +14,7 @@ from config import (
     CHUNK_N_JOBS,
     CHUNK_WRITE_BATCH_BLOCKS,
 )
-from logger import get_logger
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -19,7 +19,7 @@ from labeling import add_section_labels
 from enrichment import enrich_with_ticker_metadata
 from chunking import FinBERTChunker
 from validation import build_validation_df
-from logger import get_logger
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
