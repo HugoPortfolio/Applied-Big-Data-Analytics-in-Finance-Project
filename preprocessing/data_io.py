@@ -1,3 +1,4 @@
+from pathlib import Path
 import pandas as pd
 
 
@@ -9,24 +10,18 @@ def load_koyfin_parquets(input_dir, pattern):
         )
 
     good_dfs = []
-    bad_file = None
+    bad_files = []
 
     for file_path in files:
         try:
             good_dfs.append(pd.read_parquet(file_path))
-        except Exception as e:
-            bad_file = (file_path, str(e))
-
-    if bad_file is not None:
-        path, err = bad_file
-        print("\nBad parquet file detected:")
-        print(f"- {path}")
-        print(f"  error: {err}")
+        except Exception as exc:
+            bad_files.append((file_path, str(exc)))
 
     if not good_dfs:
         raise ValueError("No valid parquet files could be loaded.")
 
-    return pd.concat(good_dfs, ignore_index=True), bad_file
+    return pd.concat(good_dfs, ignore_index=True), bad_files
 
 
 def load_ticker_metadata(path):
@@ -35,9 +30,20 @@ def load_ticker_metadata(path):
     return pd.read_parquet(path)
 
 
-def save_segments(df_segments, output_path):
-    df_segments.to_parquet(output_path, index=False)
+def save_parquet(df, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(output_path, index=False)
 
 
-def save_validation(df_validation, output_path):
-    df_validation.to_csv(output_path, index=False)
+def save_csv(df, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+
+def build_bad_file_report(bad_files):
+    if not bad_files:
+        return pd.DataFrame(columns=["file_path", "error"])
+
+    return pd.DataFrame(
+        [{"file_path": str(path), "error": err} for path, err in bad_files]
+    )

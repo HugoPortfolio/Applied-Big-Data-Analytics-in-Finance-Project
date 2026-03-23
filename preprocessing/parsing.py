@@ -3,6 +3,9 @@ from typing import Any
 
 import pandas as pd
 
+from config import DATE_FORMAT
+
+
 SPEAKER_PATTERN = re.compile(
     r"(?m)^(OperatorOperator|[^\W\d_][^\n]{1,100}?(?:Executive|Analyst))$",
     re.UNICODE,
@@ -15,9 +18,9 @@ def as_text(value: Any) -> str:
     return str(value).strip()
 
 
-def extract_company_name(row: dict[str, Any]) -> str:
-    transcript_subheader = as_text(row.get("transcript_subheader", ""))
-    raw_title = as_text(row.get("title", ""))
+def extract_company_name(row: Any) -> str:
+    transcript_subheader = as_text(getattr(row, "transcript_subheader", ""))
+    raw_title = as_text(getattr(row, "title", ""))
 
     lines = [line.strip() for line in transcript_subheader.split("\n") if line.strip()]
 
@@ -30,17 +33,25 @@ def extract_company_name(row: dict[str, Any]) -> str:
     return raw_title
 
 
-def extract_title(row: dict[str, Any]) -> str:
-    return as_text(row.get("title", ""))
+def extract_title(row: Any) -> str:
+    return as_text(getattr(row, "title", ""))
 
 
-def extract_date(row: dict[str, Any]):
-    raw_date = as_text(row.get("subheader", ""))
+def extract_date(row: Any):
+    raw_date = as_text(getattr(row, "subheader", ""))
 
     if not raw_date:
         return pd.NaT
 
-    return pd.to_datetime(raw_date, errors="coerce")
+    return pd.to_datetime(raw_date, format=DATE_FORMAT, errors="coerce")
+
+
+def extract_transcript_metadata(row: Any) -> dict[str, Any]:
+    return {
+        "company_name": extract_company_name(row),
+        "title": extract_title(row),
+        "date": extract_date(row),
+    }
 
 
 def parse_speaker(raw_speaker: str) -> dict[str, str]:
@@ -139,44 +150,76 @@ def reconstruct_raw_segment_text(raw_segments: list[dict[str, str]]) -> str:
     return "\n".join(parts).strip()
 
 
+def build_segment_rows(
+    transcript_id: int,
+    metadata: dict[str, Any],
+    merged_segments: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    for segment_id, segment in enumerate(merged_segments):
+        rows.append(
+            {
+                "transcript_id": transcript_id,
+                "segment_id": segment_id,
+                "company_name": metadata["company_name"],
+                "date": metadata["date"],
+                "title": metadata["title"],
+                "speaker_name": segment["speaker_name"],
+                "speaker_role": segment["speaker_role"],
+                "content": segment["content"],
+            }
+        )
+
+    return rows
+
+
+def build_trace_row(
+    transcript_id: int,
+    metadata: dict[str, Any],
+    body: str,
+    raw_segments: list[dict[str, str]],
+    merged_segments: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "transcript_id": transcript_id,
+        "company_name": metadata["company_name"],
+        "date": metadata["date"],
+        "title": metadata["title"],
+        "raw_length": len(body),
+        "segmented_length": len(reconstruct_raw_segment_text(raw_segments)),
+        "n_raw_segments": len(raw_segments),
+        "n_merged_segments": len(merged_segments),
+    }
+
+
 def build_segments_and_trace(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     segment_rows: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
 
-    for transcript_id, row in enumerate(df_raw.to_dict("records")):
-        body = as_text(row.get("body", ""))
-        company_name = extract_company_name(row)
-        title = extract_title(row)
-        date = extract_date(row)
+    for transcript_id, row in enumerate(df_raw.itertuples(index=False)):
+        body = as_text(getattr(row, "body", ""))
+        metadata = extract_transcript_metadata(row)
 
         raw_segments = split_by_speaker(body)
         merged_segments = merge_consecutive_same_speaker(raw_segments)
 
-        for segment_id, segment in enumerate(merged_segments):
-            segment_rows.append(
-                {
-                    "transcript_id": transcript_id,
-                    "segment_id": segment_id,
-                    "company_name": company_name,
-                    "date": date,
-                    "title": title,
-                    "speaker_name": segment["speaker_name"],
-                    "speaker_role": segment["speaker_role"],
-                    "content": segment["content"],
-                }
+        segment_rows.extend(
+            build_segment_rows(
+                transcript_id=transcript_id,
+                metadata=metadata,
+                merged_segments=merged_segments,
             )
+        )
 
         trace_rows.append(
-            {
-                "transcript_id": transcript_id,
-                "company_name": company_name,
-                "date": date,
-                "title": title,
-                "raw_length": len(body),
-                "segmented_length": len(reconstruct_raw_segment_text(raw_segments)),
-                "n_raw_segments": len(raw_segments),
-                "n_merged_segments": len(merged_segments),
-            }
+            build_trace_row(
+                transcript_id=transcript_id,
+                metadata=metadata,
+                body=body,
+                raw_segments=raw_segments,
+                merged_segments=merged_segments,
+            )
         )
 
     return pd.DataFrame(segment_rows), pd.DataFrame(trace_rows)
