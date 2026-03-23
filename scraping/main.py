@@ -1,9 +1,14 @@
-from scraping.logger_setup import build_logger
+from scraping.config import LOGGER_CONFIG
 from scraping.scraper import KoyfinScraper
+from utils.logger import configure_logger, ConsoleOnlyImportantFilter, get_logger
 
 
 def main():
-    logger = build_logger()
+    configure_logger(
+        **LOGGER_CONFIG,
+        console_filter=ConsoleOnlyImportantFilter(),
+    )
+    logger = get_logger("koyfin_scraper")
     scraper = KoyfinScraper(logger=logger)
     scraper.run()
 

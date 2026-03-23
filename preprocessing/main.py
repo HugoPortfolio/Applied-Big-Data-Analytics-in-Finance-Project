@@ -1,10 +1,10 @@
-from config import PREPROCESSING_LOG_PATH
-from logger import configure_logger
-from pipeline import PreprocessingPipeline
+from preprocessing.config import LOGGER_CONFIG
+from preprocessing.pipeline import PreprocessingPipeline
+from utils.logger import configure_logger
 
 
 def main():
-    configure_logger(PREPROCESSING_LOG_PATH)
+    configure_logger(**LOGGER_CONFIG)
     pipeline = PreprocessingPipeline()
     pipeline.run()
 
