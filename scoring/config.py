@@ -7,6 +7,7 @@ PROJECT_ROOT = SCORING_DIR.parent
 INPUT_DIR = PROJECT_ROOT / "data" / "processed"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "scored"
 LOG_DIR = PROJECT_ROOT / "logs"
+MODELS_DIR = PROJECT_ROOT / "data" / "models"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -22,11 +23,11 @@ LOGGER_CONFIG = {
 }
 
 # INPUT / OUTPUT FILES
-CHUNKS_INPUT_PATH = INPUT_DIR / "koyfin_chunks.parquet"
-SCORED_CHUNKS_OUTPUT_PATH = OUTPUT_DIR / "koyfin_chunks_scored.parquet"
+CHUNKS_INPUT_PATH = INPUT_DIR / "koyfin_chunks_sp500.parquet"
+SCORED_CHUNKS_OUTPUT_PATH = OUTPUT_DIR / "koyfin_chunks_scored_finetuned_sp500.parquet"
 
 # MODEL
-MODEL_NAME = "yiyanghkust/finbert-tone"
+MODEL_NAME = MODELS_DIR / "finbert_finetuned"
 
 # INFERENCE
 BATCH_SIZE = 400

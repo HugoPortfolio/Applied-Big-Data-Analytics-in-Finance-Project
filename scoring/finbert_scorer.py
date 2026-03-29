@@ -41,7 +41,7 @@ class FinBERTScorer:
             texts,
             padding=True,
             truncation=True,
-            max_length=512,
+            max_length=256,
             return_tensors="pt",
         )
         encoded = {k: v.to(self.device, non_blocking=True) for k, v in encoded.items()}
