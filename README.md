@@ -7,16 +7,17 @@ This project builds a complete pipeline to transform raw earnings call transcrip
 The repository is organized as a sequence of connected stages:
 
 1. transcript collection from Koyfin
-2. transcript cleaning and preprocessing
-3. speaker parsing and section assignment
-4. chunking of transcripts into model-ready text units
-5. creation of an annotation sample for supervised learning
-6. LLM-based labeling of chunk sentiment/tone
-7. fine-tuning of FinBERT on the labeled chunk dataset
-8. full-corpus chunk-level scoring with the selected model
-9. transcript-level feature engineering
-10. merging with market and firm-level data
-11. econometric analysis
+2. raw data merging and cleanup
+3. transcript cleaning and preprocessing
+4. speaker parsing and section assignment
+5. chunking of transcripts into model-ready text units
+6. creation of an annotation sample for supervised learning
+7. LLM-based labeling of chunk sentiment/tone
+8. fine-tuning of FinBERT on the labeled chunk dataset
+9. full-corpus chunk-level scoring with the selected model
+10. transcript-level feature engineering
+11. merging with market and firm-level data
+12. econometric analysis
 
 The goal is not only to classify text, but to convert earnings call language into structured sentiment measures that can be tested against market outcomes.
 
@@ -36,15 +37,16 @@ This stage is responsible for:
 The scraping output is the raw transcript dataset.
 
 ### 2. Raw data merging and cleanup
-The raw parquet shards are merged into a clean transcript-level dataset.
+The raw parquet shards are first merged into a single transcript-level dataset.
 
 This stage typically:
-- merges all source transcript parquet files
-- removes duplicate entries
-- parses transcript dates
-- drops malformed or unusable rows
+- loads all raw Koyfin transcript parquet files
+- removes rows with unparsed dates
+- concatenates the cleaned files
+- removes duplicates
+- sorts the final dataset chronologically
 
-This produces a single cleaned transcript dataset.
+The output of this stage is the merged raw transcript parquet
 
 ### 3. Transcript parsing and enrichment
 The cleaned transcripts are transformed into a more structured format.
@@ -176,8 +178,10 @@ Below is the project tree in logical package form, with the current scripts grou
 .
 ├── data/
 │   ├── raw/
+│   ├── merged_raw_files/
 │   ├── curated/
 │   ├── processed/
+│   ├── models/
 │   ├── training/
 │   ├── scored/
 │   ├── features/
@@ -196,9 +200,11 @@ Below is the project tree in logical package form, with the current scripts grou
 │   ├── koyfin_helpers.py
 │   └── main.py
 │
+├── merge_raw/
+│   └── merge_raw_parquets.py
+│
 ├── preprocessing/
 │   ├── config.py
-│   ├── merge_raw_parquets.py
 │   ├── parsing.py
 │   ├── enrichment.py
 │   ├── data_io.py
@@ -231,19 +237,13 @@ Below is the project tree in logical package form, with the current scripts grou
 │
 ├── regressions/
 │   ├── config.py
-│   ├── pipeline.py
-│   └── main.py
+│   ├── regression.py
+│   ├── descriptive_stats.py
+│   └── graphs.py
 │
 ├── utils/
 │   └── logger.py
 │   └── sp500_only.py
-│
-├── models/
-│   └── finbert_finetuned/
-│       ├── config.json
-│       ├── tokenizer files
-│       ├── model.safetensors
-│       └── checkpoint-*/
 │
 ├── logs/
 └── README.md
@@ -257,15 +257,16 @@ Main scripts:
 
 ### `scraping/`
 This folder handles transcript collection.
-* `merge_raw_parquets.py`: merges raw transcript shards and cleans invalid dates
-* `parsing.py`: extracts speaker and transcript metadata
-* `enrichment.py`: enriches company metadata and normalizes firm names
-* `data_io.py`: parquet loading/saving helpers
-* `validation.py`: transcript quality and section-balance checks
-* `chunking.py`: chunk generation using a transformer-compatible tokenizer
-* `pipeline.py`: end-to-end preprocessing flow
-* `config.py`: preprocessing paths and parameters
-* `main.py`: launch point for preprocessing
+* `scraper.py`: browser-based Koyfin transcript scraping logic
+* `selectors.py`: Selenium selectors used by the scraper
+* `storage.py`: parquet shard writer
+* `koyfin_helpers.py`: helper functions for navigation, waiting, and transcript extraction
+* `config.py`: scraping parameters, credentials, paths, and scraping windows
+* `main.py`: launch point for scraping
+
+### `merge_raw/`
+This folder handles raw file merging and first-pass cleanup.
+* `merge_raw_parquets.py`: merges raw transcript shards, removes invalid dates and duplicates, and writes the final merged parquet
 
 ### `llm_finetune/`
 
@@ -306,7 +307,7 @@ Main scripts:
 
 ### `regressions/`
 
-This folder contains the econometric analysis and empirical diagnostics.
+This folder contains the econometric analysis and empirical outputs.
 
 Main scripts:
 
@@ -314,7 +315,6 @@ Main scripts:
 * `regression.py`: main specifications and robustness checks
 * `descriptive_stats.py`: descriptive tables and sample overview
 * `graphs.py`: descriptive and empirical figures
-* `model_check.py`: comparison and diagnostics for baseline vs fine-tuned models
 
 ### `utils/`
 
@@ -331,8 +331,10 @@ Main scripts:
 ### Scraping output
 - raw transcript parquet shards
 
+### Raw merge output
+- merged raw transcript parquet
+
 ### Preprocessing output
-- merged transcript parquet
 - speaker-segment parquet
 - chunk parquet
 - optional S&P 500 filtered segment/chunk parquets
@@ -362,23 +364,28 @@ Main scripts:
 1. **Scrape transcripts**  
    `python scraping/main.py`
 
-2. **Preprocess and chunk transcripts**  
+2. **Merge raw transcript files**  
+   `python merge_raw/merge_raw_parquets.py`
+
+3. **Preprocess and chunk transcripts**  
    `python preprocessing/main.py`
 
-3. **Optionally filter to the S&P 500 universe**  
-   `python filters/sp500_only.py`
+4. **Optionally filter to the S&P 500 universe**  
+   `python utils/sp500_only.py`
 
-4. **Build labels and fine-tune the model**  
+5. **Build labels and fine-tune the model**  
    `python llm_finetune/main.py`
 
-5. **Score the full corpus with the selected model**  
+6. **Score the full corpus with the selected model**  
    `python scoring/main.py`
 
-6. **Build transcript-level features and the regression dataset**  
+7. **Build transcript-level features and the regression dataset**  
    `python features/main.py`
 
-7. **Run the econometric analysis**  
-   `python regressions/main.py`
+8. **Run the econometric analysis and empirical outputs**  
+   `python regressions/regression.py`  
+   `python regressions/descriptive_stats.py`  
+   `python regressions/graphs.py`
 
 ---
 
@@ -401,6 +408,6 @@ The pipeline is therefore both an NLP workflow and a quantitative finance workfl
 
 The repository transforms raw earnings call transcripts into a complete empirical research pipeline:
 
-**scraping → preprocessing → chunking → LLM labeling → FinBERT fine-tuning → scoring → feature engineering → regressions**
+**scraping → merging raw files → preprocessing → chunking → LLM labeling → FinBERT fine-tuning → scoring → feature engineering → regressions**
 
 This makes it possible to study whether the tone of earnings call communication contains measurable information for financial markets.
