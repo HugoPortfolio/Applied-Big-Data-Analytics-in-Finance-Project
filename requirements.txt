@@ -12,3 +12,6 @@ sentencepiece>=0.1.99
 joblib
 torch>=2.4.0
 statsmodels
+matplotlib
+stargazer
+litellm
