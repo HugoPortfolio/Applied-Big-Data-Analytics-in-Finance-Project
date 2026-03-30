@@ -213,8 +213,6 @@ Below is the project tree in logical package form, with the current scripts grou
 │   ├── llm_labeler.py
 │   ├── train.py
 │   ├── search_hparams.py
-│   ├── read_results.py
-│   ├── export_prompt_examples.py
 │   └── main.py
 │
 ├── scoring/
@@ -280,8 +278,6 @@ Main scripts:
 * `llm_labeler.py`: labels chunks using an LLM API
 * `train.py`: fine-tunes FinBERT on the labeled dataset
 * `search_hparams.py`: hyperparameter search on the training dataset
-* `read_results.py`: reads metrics and evaluation predictions
-* `export_prompt_examples.py`: exports informative prediction examples for prompt analysis
 * `main.py`: orchestrates the full build / label / train workflow
 
 ### `scoring/`

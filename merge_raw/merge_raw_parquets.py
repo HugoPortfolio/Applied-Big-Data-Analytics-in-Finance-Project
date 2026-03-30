@@ -5,7 +5,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 INPUT_DIR = DATA_DIR / "raw"
-OUTPUT_DIR = DATA_DIR / "curated"
+OUTPUT_DIR = DATA_DIR / "merged_raw_files"
 
 # Parameters
 SOURCE_PATTERN = "koyfin_transcripts_*.parquet"
@@ -29,7 +29,7 @@ def is_source_parquet(path: Path) -> bool:
         name.startswith("koyfin_transcripts_")
         and name.endswith(".parquet")
         and not name.endswith("_trimmed.parquet")
-        and "merged" not in name
+        and "merge_raw" not in name
     )
 
 
@@ -113,7 +113,7 @@ merged = merged.assign(
 after_dedup = len(merged)
 n_duplicates_removed = before_dedup - after_dedup
 
-# Compute observed date range on final merged file
+# Compute observed date range on final merge_raw file
 merged_dates = pd.to_datetime(
     merged[DATE_COL],
     format=DATE_FORMAT,
@@ -123,7 +123,7 @@ merged_dates = pd.to_datetime(
 first_observed_date = merged_dates.min()
 last_observed_date = merged_dates.max()
 
-# Save final merged parquet
+# Save final merge_raw parquet
 MERGED_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 merged.to_parquet(MERGED_OUTPUT, index=False)
 

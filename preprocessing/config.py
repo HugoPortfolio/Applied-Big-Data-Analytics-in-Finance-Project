@@ -4,7 +4,7 @@ from pathlib import Path
 PREPROCESSING_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PREPROCESSING_DIR.parent
 
-INPUT_DIR = PROJECT_ROOT / "data" / "curated"
+INPUT_DIR = PROJECT_ROOT / "data" / "merged_raw_files"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 EXTERNAL_DIR = PROJECT_ROOT / "data" / "external"
 LOG_DIR = PROJECT_ROOT / "logs"
