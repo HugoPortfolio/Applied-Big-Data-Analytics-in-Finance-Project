@@ -20,11 +20,11 @@ LOGGER_CONFIG = {
     "rotating_file": True,
 }
 
-SCORED_CHUNKS_INPUT_PATH = SCORED_DIR / "koyfin_chunks_scored_sp500.parquet"
+SCORED_CHUNKS_INPUT_PATH = SCORED_DIR / "koyfin_chunks_scored_finetuned_sp500.parquet"
 
 MARKET_DIR = EXTERNAL_DIR / "market"
 MARKETCAP_DIR = EXTERNAL_DIR / "marketCap"
 EARNING_DIR = EXTERNAL_DIR / "earning"
 
-TRANSCRIPT_FEATURES_OUTPUT_PATH = OUTPUT_DIR / "koyfin_transcript_features.parquet"
-REGRESSION_DATASET_OUTPUT_PATH = OUTPUT_DIR / "koyfin_regression_dataset.parquet"
+TRANSCRIPT_FEATURES_OUTPUT_PATH = OUTPUT_DIR / "koyfin_transcript_features_finetuned_sp500.parquet"
+REGRESSION_DATASET_OUTPUT_PATH = OUTPUT_DIR / "koyfin_regression_dataset_finetuned_sp500.parquet"
