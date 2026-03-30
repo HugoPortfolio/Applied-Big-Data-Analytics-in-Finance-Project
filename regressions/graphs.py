@@ -1,104 +1,130 @@
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 from config import FINAL_DATASET, RESULTS_DIR
+
+
+# Paper-style palette
+GRAY_FILL = "#d0d0d0"
+GRAY_FILL_2 = "#bdbdbd"
+GRID_GRAY = "#d9d9d9"
+BLACK = "#000000"
+
+# Explicitly different colors for the combined time-series figure
+COLOR_PREPARED = "#1f77b4"
+COLOR_QA = "#d62728"
+COLOR_GAP = "#2ca02c"
 
 
 def load_data() -> pd.DataFrame:
     return pd.read_parquet(FINAL_DATASET)
 
 
-def save_summary_statistics(df: pd.DataFrame):
-    cols = [
-        "NegPrepared",
-        "NegQA",
-        "NegGap",
-        "CAR_m1_p1",
-        "eps_surprise",
-        "revenue_surprise",
-        "log_marketCap",
-        "log_AvgVolume_m20_m1",
-        "log_n_tokens_qa",
-    ]
+def setup_matplotlib() -> None:
+    plt.rcParams.update(
+        {
+            "figure.dpi": 120,
+            "savefig.dpi": 300,
+            "figure.figsize": (8, 5),
+            "font.family": "serif",
+            "font.size": 11,
+            "axes.titlesize": 13,
+            "axes.labelsize": 11,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "legend.fontsize": 10,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.linewidth": 0.8,
+            "lines.linewidth": 1.2,
+            "patch.linewidth": 0.8,
+            "text.color": BLACK,
+            "axes.labelcolor": BLACK,
+            "axes.edgecolor": BLACK,
+            "xtick.color": BLACK,
+            "ytick.color": BLACK,
+        }
+    )
 
-    sample = df[cols].dropna().copy()
 
-    summary = sample.describe(percentiles=[0.25, 0.5, 0.75]).T
-    summary = summary[["count", "mean", "std", "25%", "50%", "75%"]]
-    summary.columns = ["N", "Mean", "Std. Dev.", "P25", "Median", "P75"]
+def style_ax(ax, add_ygrid: bool = True) -> None:
+    if add_ygrid:
+        ax.grid(True, axis="y", color=GRID_GRAY, linewidth=0.6)
+    else:
+        ax.grid(False)
 
-    summary.to_csv(RESULTS_DIR / "summary_statistics.csv")
+    ax.spines["left"].set_linewidth(0.8)
+    ax.spines["bottom"].set_linewidth(0.8)
+    ax.spines["left"].set_color(BLACK)
+    ax.spines["bottom"].set_color(BLACK)
+    ax.tick_params(axis="both", which="major", length=4, width=0.8, colors=BLACK)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
 
 
-def save_histogram(df: pd.DataFrame, column: str, title: str, xlabel: str, filename: str):
-    sample = df[[column]].dropna().copy()
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.hist(sample[column], bins=50)
-    ax.axvline(0, linestyle="--", linewidth=1)
-
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Frequency")
-
+def finalize_figure(fig, filename: str) -> None:
     fig.tight_layout()
-    fig.savefig(RESULTS_DIR / filename, dpi=300, bbox_inches="tight")
+    fig.savefig(RESULTS_DIR / filename, bbox_inches="tight")
     plt.close(fig)
 
 
-def save_neg_gap_histogram(df: pd.DataFrame):
-    save_histogram(
-        df=df,
-        column="NegGap",
-        title="Distribution of Negative Gap",
-        xlabel="NegGap",
-        filename="fig_neg_gap_histogram.png",
-    )
-
-
-def save_neg_prepared_histogram(df: pd.DataFrame):
-    save_histogram(
-        df=df,
-        column="NegPrepared",
-        title="Distribution of Prepared Negativity",
-        xlabel="NegPrepared",
-        filename="fig_neg_prepared_histogram.png",
-    )
-
-
-def save_neg_qa_histogram(df: pd.DataFrame):
-    save_histogram(
-        df=df,
-        column="NegQA",
-        title="Distribution of Q&A Negativity",
-        xlabel="NegQA",
-        filename="fig_neg_qa_histogram.png",
-    )
-
-
-def save_prepared_vs_qa_boxplot(df: pd.DataFrame):
+def save_prepared_vs_qa_boxplot(df: pd.DataFrame) -> None:
     sample = df[["NegPrepared", "NegQA"]].dropna().copy()
 
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.boxplot(
         [sample["NegPrepared"], sample["NegQA"]],
-        tick_labels=["Prepared", "Q&A"],
+        tick_labels=["Prepared remarks", "Q&A"],
         showfliers=False,
+        widths=0.5,
+        patch_artist=True,
+        boxprops=dict(facecolor=GRAY_FILL, edgecolor=BLACK, linewidth=0.9),
+        medianprops=dict(color=BLACK, linewidth=1.1),
+        whiskerprops=dict(color=BLACK, linewidth=0.9),
+        capprops=dict(color=BLACK, linewidth=0.9),
     )
-    ax.axhline(0, linestyle="--", linewidth=1)
+    ax.axhline(0, linestyle="--", linewidth=1.0, color=BLACK)
 
-    ax.set_title("Prepared Remarks vs Q&A Negativity")
+    ax.set_title("Prepared Remarks and Q&A Negativity", pad=10)
     ax.set_ylabel("Negativity score")
 
-    fig.tight_layout()
-    fig.savefig(RESULTS_DIR / "fig_prepared_vs_qa_boxplot.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    style_ax(ax, add_ygrid=True)
+    finalize_figure(fig, "fig_prepared_vs_qa_boxplot.png")
 
 
-def save_neg_gap_quintile_plot(df: pd.DataFrame):
-    needed = ["NegGap", "CAR_m1_p1"]
-    sample = df[needed].dropna().copy()
+def save_three_distribution_panels(df: pd.DataFrame) -> None:
+    cols = [
+        ("NegPrepared", "Prepared-Remarks Negativity"),
+        ("NegQA", "Q&A Negativity"),
+        ("NegGap", "Relative Q&A Negativity"),
+    ]
+    sample = df[[c for c, _ in cols]].dropna().copy()
+
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.3), sharey=True)
+
+    for ax, (col, title) in zip(axes, cols):
+        ax.hist(
+            sample[col],
+            bins=50,
+            color=GRAY_FILL,
+            edgecolor=BLACK,
+            linewidth=0.5,
+        )
+        ax.axvline(0, linestyle="--", linewidth=1.0, color=BLACK)
+        ax.set_title(title, pad=8)
+        ax.set_xlabel(col)
+        style_ax(ax, add_ygrid=True)
+
+    axes[0].set_ylabel("Frequency")
+
+    finalize_figure(fig, "fig_distributions_prepared_qa_gap.png")
+
+
+def save_neg_gap_quintile_plot(df: pd.DataFrame) -> None:
+    sample = df[["NegGap", "CAR_m1_p1"]].dropna().copy()
 
     sample["NegGap_quintile"] = pd.qcut(
         sample["NegGap"],
@@ -112,28 +138,32 @@ def save_neg_gap_quintile_plot(df: pd.DataFrame):
         .agg(["mean", "std", "count"])
         .reset_index()
     )
-
     grouped["se"] = grouped["std"] / np.sqrt(grouped["count"])
     grouped["ci95"] = 1.96 * grouped["se"]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.bar(grouped["NegGap_quintile"], grouped["mean"], yerr=grouped["ci95"], capsize=4)
-    ax.axhline(0, linewidth=1)
+    ax.bar(
+        grouped["NegGap_quintile"],
+        grouped["mean"],
+        yerr=grouped["ci95"],
+        capsize=3,
+        color=GRAY_FILL,
+        edgecolor=BLACK,
+        linewidth=0.8,
+        ecolor=BLACK,
+    )
+    ax.axhline(0, linewidth=1.0, color=BLACK)
 
-    ax.set_title("Mean CAR[-1,+1] by NegGap Quintile")
+    ax.set_title("Mean CAR[-1,+1] by NegGap Quintile", pad=10)
     ax.set_xlabel("NegGap quintile")
     ax.set_ylabel("Mean CAR[-1,+1]")
 
-    fig.tight_layout()
-    fig.savefig(RESULTS_DIR / "fig_neg_gap_quintiles_car.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    grouped.to_csv(RESULTS_DIR / "neg_gap_quintiles_car.csv", index=False)
+    style_ax(ax, add_ygrid=True)
+    finalize_figure(fig, "fig_neg_gap_quintiles_car.png")
 
 
-def save_neg_gap_decile_binscatter(df: pd.DataFrame):
-    needed = ["NegGap", "CAR_m1_p1"]
-    sample = df[needed].dropna().copy()
+def save_neg_gap_decile_binscatter(df: pd.DataFrame) -> None:
+    sample = df[["NegGap", "CAR_m1_p1"]].dropna().copy()
 
     sample["NegGap_decile"] = pd.qcut(
         sample["NegGap"],
@@ -152,7 +182,6 @@ def save_neg_gap_decile_binscatter(df: pd.DataFrame):
         )
         .reset_index()
     )
-
     grouped["se"] = grouped["car_std"] / np.sqrt(grouped["n"])
     grouped["ci95"] = 1.96 * grouped["se"]
 
@@ -162,139 +191,123 @@ def save_neg_gap_decile_binscatter(df: pd.DataFrame):
         grouped["car_mean"],
         yerr=grouped["ci95"],
         fmt="o-",
-        capsize=4,
+        capsize=3,
+        color=BLACK,
+        ecolor=BLACK,
+        markerfacecolor=GRAY_FILL_2,
+        markeredgecolor=BLACK,
+        markersize=5,
+        linewidth=1.1,
     )
-    ax.axhline(0, linewidth=1)
-    ax.axvline(0, linestyle="--", linewidth=1)
+    ax.axhline(0, linewidth=1.0, color=BLACK)
+    ax.axvline(0, linestyle="--", linewidth=1.0, color=BLACK)
 
-    ax.set_title("Binned relation between NegGap and CAR[-1,+1]")
+    ax.set_title("Binned Relation Between NegGap and CAR[-1,+1]", pad=10)
     ax.set_xlabel("Mean NegGap within decile")
     ax.set_ylabel("Mean CAR[-1,+1]")
 
-    fig.tight_layout()
-    fig.savefig(RESULTS_DIR / "fig_neg_gap_binscatter_car.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    grouped.to_csv(RESULTS_DIR / "neg_gap_binscatter_car.csv", index=False)
+    style_ax(ax, add_ygrid=True)
+    finalize_figure(fig, "fig_neg_gap_binscatter_car.png")
 
 
-def save_prepared_quintile_car_plot(df: pd.DataFrame):
-    needed = ["NegPrepared", "CAR_m1_p1"]
-    sample = df[needed].dropna().copy()
+def _year_ticks_from_labels(labels: pd.Series) -> tuple[list[int], list[str]]:
+    labels = labels.astype(str).tolist()
+    positions: list[int] = []
+    tick_labels: list[str] = []
+    seen_years: set[str] = set()
 
-    sample["Prepared_quintile"] = pd.qcut(
-        sample["NegPrepared"],
-        5,
-        labels=["Q1", "Q2", "Q3", "Q4", "Q5"],
-        duplicates="drop",
-    )
+    for i, lab in enumerate(labels):
+        year = lab[:4]
+        if year not in seen_years:
+            seen_years.add(year)
+            positions.append(i)
+            tick_labels.append(year)
 
-    grouped = (
-        sample.groupby("Prepared_quintile", observed=True)["CAR_m1_p1"]
-        .agg(["mean", "std", "count"])
-        .reset_index()
-    )
-
-    grouped["se"] = grouped["std"] / np.sqrt(grouped["count"])
-    grouped["ci95"] = 1.96 * grouped["se"]
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.bar(grouped["Prepared_quintile"], grouped["mean"], yerr=grouped["ci95"], capsize=4)
-    ax.axhline(0, linewidth=1)
-
-    ax.set_title("Mean CAR[-1,+1] by Prepared Negativity Quintile")
-    ax.set_xlabel("Prepared Negativity quintile")
-    ax.set_ylabel("Mean CAR[-1,+1]")
-
-    fig.tight_layout()
-    fig.savefig(RESULTS_DIR / "fig_prepared_quintiles_car.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    grouped.to_csv(RESULTS_DIR / "prepared_quintiles_car.csv", index=False)
+    return positions, tick_labels
 
 
-def save_time_series_plot(df: pd.DataFrame, variable: str, title: str, ylabel: str, filename: str):
+def save_combined_negativity_time_series(df: pd.DataFrame) -> None:
     if "year_quarter" not in df.columns:
         return
 
-    sample = df[["year_quarter", variable]].dropna().copy()
+    cols = ["year_quarter", "NegPrepared", "NegQA", "NegGap"]
+    sample = df[cols].dropna().copy()
 
     grouped = (
-        sample.groupby("year_quarter", observed=True)[variable]
+        sample.groupby("year_quarter", observed=True)[["NegPrepared", "NegQA", "NegGap"]]
         .mean()
         .reset_index()
         .sort_values("year_quarter")
     )
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(grouped["year_quarter"].astype(str), grouped[variable])
-    ax.axhline(0, linestyle="--", linewidth=1)
+    x = np.arange(len(grouped))
+    xticks, xticklabels = _year_ticks_from_labels(grouped["year_quarter"])
 
-    ax.set_title(title)
-    ax.set_xlabel("Year-quarter")
-    ax.set_ylabel(ylabel)
-    ax.tick_params(axis="x", rotation=90)
+    fig, ax = plt.subplots(figsize=(10.5, 5.4))
+    ax.plot(x, grouped["NegPrepared"], label="Prepared remarks", color=COLOR_PREPARED, linewidth=1.3)
+    ax.plot(x, grouped["NegQA"], label="Q&A", color=COLOR_QA, linewidth=1.3)
+    ax.plot(x, grouped["NegGap"], label="Relative Q&A negativity", color=COLOR_GAP, linewidth=1.3)
+    ax.axhline(0, linestyle="--", linewidth=1.0, color=BLACK)
 
-    fig.tight_layout()
-    fig.savefig(RESULTS_DIR / filename, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    ax.set_title("Average Negativity Measures Over Time", pad=10)
+    ax.set_xlabel("Year")
+    ax.set_ylabel("Mean score")
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels, rotation=35, ha="right")
+    ax.margins(x=0.01)
 
-    grouped.to_csv(RESULTS_DIR / filename.replace(".png", ".csv"), index=False)
+    style_ax(ax, add_ygrid=True)
+    ax.legend(frameon=False, loc="best")
+
+    finalize_figure(fig, "fig_time_series_combined_negativity.png")
 
 
-def save_neg_prepared_time_series(df: pd.DataFrame):
-    save_time_series_plot(
-        df=df,
-        variable="NegPrepared",
-        title="Average Prepared Negativity over Time",
-        ylabel="Mean NegPrepared",
-        filename="fig_time_series_neg_prepared.png",
+def save_text_measure_comparison_boxplot(df: pd.DataFrame) -> None:
+    cols = ["NegGap", "NegGap_seglenw", "NegGap_segmax"]
+    if not set(cols).issubset(df.columns):
+        return
+
+    labels = ["Baseline", "Seg.-len. weighted", "Most-negative portion"]
+    sample = df[cols].dropna().copy()
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    ax.boxplot(
+        [sample[c] for c in cols],
+        tick_labels=labels,
+        showfliers=False,
+        widths=0.5,
+        patch_artist=True,
+        boxprops=dict(facecolor=GRAY_FILL, edgecolor=BLACK, linewidth=0.9),
+        medianprops=dict(color=BLACK, linewidth=1.1),
+        whiskerprops=dict(color=BLACK, linewidth=0.9),
+        capprops=dict(color=BLACK, linewidth=0.9),
     )
+    ax.axhline(0, linestyle="--", linewidth=1.0, color=BLACK)
+
+    ax.set_title("Alternative Transcript-Level Measures of Relative Q&A Negativity", pad=10)
+    ax.set_ylabel("NegGap measure")
+
+    style_ax(ax, add_ygrid=True)
+    finalize_figure(fig, "fig_compare_text_measures_boxplot.png")
 
 
-def save_neg_qa_time_series(df: pd.DataFrame):
-    save_time_series_plot(
-        df=df,
-        variable="NegQA",
-        title="Average Q&A Negativity over Time",
-        ylabel="Mean NegQA",
-        filename="fig_time_series_neg_qa.png",
-    )
-
-
-def save_neg_gap_time_series(df: pd.DataFrame):
-    save_time_series_plot(
-        df=df,
-        variable="NegGap",
-        title="Average Negative Gap over Time",
-        ylabel="Mean NegGap",
-        filename="fig_time_series_neg_gap.png",
-    )
-
-
-def main():
+def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    setup_matplotlib()
 
     df = load_data()
 
-    save_summary_statistics(df)
-
-    save_neg_gap_histogram(df)
-    save_neg_prepared_histogram(df)
-    save_neg_qa_histogram(df)
-
+    save_three_distribution_panels(df)
     save_prepared_vs_qa_boxplot(df)
-
     save_neg_gap_quintile_plot(df)
     save_neg_gap_decile_binscatter(df)
-    save_prepared_quintile_car_plot(df)
+    save_combined_negativity_time_series(df)
+    save_text_measure_comparison_boxplot(df)
 
-    save_neg_prepared_time_series(df)
-    save_neg_qa_time_series(df)
-    save_neg_gap_time_series(df)
-
-    print("Saved summary statistics and graphs.")
+    print("Saved graphs.")
 
 
 if __name__ == "__main__":
     main()
+
+

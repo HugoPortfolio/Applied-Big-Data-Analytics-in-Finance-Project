@@ -1,21 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import pandas as pd
 
-from config import FINAL_DATASET, RESULTS_DIR
+from config import FINAL_DATASET, CHUNK_DATASET, RESULTS_DIR
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCORED_DIR = PROJECT_ROOT / "data" / "scored"
-PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-
-CHUNK_CANDIDATES = [
-    SCORED_DIR / "koyfin_chunks_scored_finetuned_sp500.parquet",
-    SCORED_DIR / "koyfin_chunks_scored.parquet",
-    PROCESSED_DIR / "koyfin_chunks_sp500.parquet",
-    PROCESSED_DIR / "koyfin_chunks.parquet",
-]
 
 SUMMARY_VARS = [
     "NegPrepared",
@@ -43,39 +31,24 @@ def load_final_data() -> pd.DataFrame:
     return pd.read_parquet(FINAL_DATASET)
 
 
-def load_chunk_data() -> pd.DataFrame | None:
-    for path in CHUNK_CANDIDATES:
-        if not path.exists():
-            continue
-        try:
-            df = pd.read_parquet(path)
-            print(f"Chunk data loaded from: {path}")
-            return df
-        except Exception as e:
-            print(f"Skipping invalid chunk file: {path}")
-            print(f"Reason: {e}")
-    print("No valid chunk parquet found. Section tables will be skipped.")
-    return None
+def load_chunk_data() -> pd.DataFrame:
+    df = pd.read_parquet(CHUNK_DATASET)
+    print(f"Chunk data loaded from: {CHUNK_DATASET}")
+    return df
 
 
-def find_first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    for col in candidates:
-        if col in df.columns:
-            return col
-    return None
+def first_existing(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    return next((c for c in candidates if c in df.columns), None)
 
 
-def build_sample_overview(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    firm_col = find_first_existing_col(df, ["gvkey", "company_id", "ticker", "permno"])
-    call_col = find_first_existing_col(df, ["transcript_id", "call_id"])
-    date_col = find_first_existing_col(df, ["date", "call_date"])
-    yq_col = find_first_existing_col(df, ["year_quarter"])
+def build_sample_overview(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    firm_col = first_existing(df, ["gvkey", "company_id", "ticker", "permno"])
+    call_col = first_existing(df, ["transcript_id", "call_id"])
+    date_col = first_existing(df, ["date", "call_date"])
+    yq_col = first_existing(df, ["year_quarter"])
 
-    rows: list[tuple[str, object]] = []
+    rows: list[tuple[str, object]] = [("Observations", len(df))]
 
-    rows.append(("Observations", len(df)))
     if firm_col:
         rows.append(("Unique firms", df[firm_col].nunique()))
     if call_col:
@@ -89,15 +62,13 @@ def build_sample_overview(
             rows.append(("Start date", str(date_series.min().date())))
             rows.append(("End date", str(date_series.max().date())))
 
-    firm_quarter_distribution = None
-
+    coverage = None
     if firm_col and yq_col:
         quarters_per_firm = df.groupby(firm_col)[yq_col].nunique()
-
         rows.append(("Mean quarters per firm", round(quarters_per_firm.mean(), 2)))
         rows.append(("Median quarters per firm", round(quarters_per_firm.median(), 2)))
 
-        firm_quarter_distribution = (
+        coverage = (
             quarters_per_firm.describe(percentiles=[0.25, 0.5, 0.75])
             .to_frame(name="Value")
             .rename(
@@ -114,50 +85,26 @@ def build_sample_overview(
             )
         )
 
-    elif firm_col and call_col:
-        calls_per_firm = df.groupby(firm_col)[call_col].nunique()
-        rows.append(("Mean calls per firm", round(calls_per_firm.mean(), 2)))
-        rows.append(("Median calls per firm", round(calls_per_firm.median(), 2)))
-
-    sample_overview = pd.DataFrame(rows, columns=["Statistic", "Value"])
-    return sample_overview, firm_quarter_distribution
+    overview = pd.DataFrame(rows, columns=["Statistic", "Value"])
+    return overview, coverage
 
 
-def build_section_distribution(chunks: pd.DataFrame | None) -> pd.DataFrame | None:
-    if chunks is None or "section" not in chunks.columns:
-        return None
-
-    counts = (
-        chunks["section"]
+def build_distribution(df: pd.DataFrame, col: str, name: str) -> pd.DataFrame:
+    out = (
+        df[col]
         .value_counts(dropna=False)
-        .rename_axis("Section")
+        .rename_axis(name)
         .reset_index(name="Count")
     )
-    counts["Share"] = counts["Count"] / counts["Count"].sum()
-    return counts
+    out["Share"] = out["Count"] / out["Count"].sum()
+    return out
 
 
-def build_speaker_role_distribution(chunks: pd.DataFrame | None) -> pd.DataFrame | None:
-    if chunks is None or "speaker_role" not in chunks.columns:
-        return None
-
-    counts = (
-        chunks["speaker_role"]
-        .value_counts(dropna=False)
-        .rename_axis("Speaker role")
-        .reset_index(name="Count")
-    )
-    counts["Share"] = counts["Count"] / counts["Count"].sum()
-    return counts
-
-
-def build_summary_table(df: pd.DataFrame, variables: list[str]) -> pd.DataFrame:
-    vars_existing = [v for v in variables if v in df.columns]
-    sample = df[vars_existing].dropna().copy()
-
-    summary = sample.describe(percentiles=[0.25, 0.5, 0.75]).T
-    summary = summary[["count", "mean", "std", "25%", "50%", "75%", "min", "max"]]
-    summary = summary.rename(
+def build_summary_table(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    cols = [c for c in cols if c in df.columns]
+    out = df[cols].dropna().describe(percentiles=[0.25, 0.5, 0.75]).T
+    out = out[["count", "mean", "std", "25%", "50%", "75%", "min", "max"]]
+    return out.rename(
         columns={
             "count": "N",
             "mean": "Mean",
@@ -169,45 +116,68 @@ def build_summary_table(df: pd.DataFrame, variables: list[str]) -> pd.DataFrame:
             "max": "Max",
         }
     )
-    return summary
 
 
-def build_correlation_table(df: pd.DataFrame, variables: list[str]) -> pd.DataFrame:
-    vars_existing = [v for v in variables if v in df.columns]
-    sample = df[vars_existing].dropna().copy()
-    return sample.corr()
+def build_corr_table(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    cols = [c for c in cols if c in df.columns]
+    return df[cols].dropna().corr()
+
+
+def build_measure_comparison(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [c for c in ["NegGap", "NegGap_seglenw", "NegGap_segmax"] if c in df.columns]
+
+    labels = {
+        "NegGap": "Baseline NegGap",
+        "NegGap_seglenw": "Segment-length-weighted NegGap",
+        "NegGap_segmax": "Most-negative-portion NegGap",
+    }
+
+    out = (
+        df[cols]
+        .agg(["mean", "std", "min", "median", "max"])
+        .T
+        .rename(
+            columns={
+                "mean": "Mean",
+                "std": "Std. Dev.",
+                "min": "Min",
+                "median": "Median",
+                "max": "Max",
+            }
+        )
+    )
+
+    if "NegGap" in cols:
+        out["Corr. with baseline"] = df[cols].corr()["NegGap"]
+
+    out.index = [labels[c] for c in out.index]
+    return out.reset_index().rename(columns={"index": "Measure"})
 
 
 def print_title(title: str) -> None:
-    print()
-    print("=" * len(title))
-    print(title)
-    print("=" * len(title))
+    print(f"\n{title}\n" + "=" * len(title))
 
 
 def print_df(df: pd.DataFrame, decimals: int = 4, index: bool = True) -> None:
     out = df.copy()
-    float_cols = out.select_dtypes(include="number").columns
-    out[float_cols] = out[float_cols].round(decimals)
+    num_cols = out.select_dtypes(include="number").columns
+    out[num_cols] = out[num_cols].round(decimals)
     print(out.to_string(index=index))
 
 
 def run_basic_checks(
     final_df: pd.DataFrame,
-    section_distribution: pd.DataFrame | None,
-    speaker_distribution: pd.DataFrame | None,
+    section_dist: pd.DataFrame,
+    speaker_dist: pd.DataFrame,
 ) -> None:
-    print_title("Basic checks")
-
-    checks = []
-
-    obs = len(final_df)
-    checks.append(("Final dataset observations > 0", obs > 0, obs))
+    checks = [
+        ("Final dataset observations > 0", len(final_df) > 0, len(final_df)),
+    ]
 
     if "transcript_id" in final_df.columns:
         unique_calls = final_df["transcript_id"].nunique()
         checks.append(
-            ("One row per call in final dataset", unique_calls == obs, f"{unique_calls} unique calls vs {obs} rows")
+            ("One row per call in final dataset", unique_calls == len(final_df), f"{unique_calls} unique calls vs {len(final_df)} rows")
         )
 
     if "year_quarter" in final_df.columns:
@@ -215,101 +185,77 @@ def run_basic_checks(
             ("Year-quarter count > 0", final_df["year_quarter"].nunique() > 0, final_df["year_quarter"].nunique())
         )
 
-    if section_distribution is not None:
-        share_sum = section_distribution["Share"].sum()
-        checks.append(("Section shares sum to 1", abs(share_sum - 1.0) < 1e-8, share_sum))
+    checks.append(
+        ("Section shares sum to 1", abs(section_dist["Share"].sum() - 1.0) < 1e-8, section_dist["Share"].sum())
+    )
+    checks.append(
+        ("Speaker shares sum to 1", abs(speaker_dist["Share"].sum() - 1.0) < 1e-8, speaker_dist["Share"].sum())
+    )
 
-    if speaker_distribution is not None:
-        share_sum = speaker_distribution["Share"].sum()
-        checks.append(("Speaker shares sum to 1", abs(share_sum - 1.0) < 1e-8, share_sum))
+    sec = dict(zip(section_dist["Section"], section_dist["Count"]))
+    spk = dict(zip(speaker_dist["Speaker role"], speaker_dist["Count"]))
 
-        if section_distribution is not None:
-            sec = dict(zip(section_distribution["Section"], section_distribution["Count"]))
-            spk = dict(zip(speaker_distribution["Speaker role"], speaker_distribution["Count"]))
+    exec_expected = sec.get("Prepared", 0) + sec.get("A", 0)
+    analyst_expected = sec.get("Q", 0)
 
-            exec_expected = sec.get("Prepared", 0) + sec.get("A", 0)
-            analyst_expected = sec.get("Q", 0)
+    checks.append(
+        ("Executive chunks = Prepared + A", spk.get("Executive") == exec_expected, f"{spk.get('Executive')} vs {exec_expected}")
+    )
+    checks.append(
+        ("Analyst chunks = Q", spk.get("Analyst") == analyst_expected, f"{spk.get('Analyst')} vs {analyst_expected}")
+    )
 
-            checks.append(
-                ("Executive chunks = Prepared + A", spk.get("Executive", None) == exec_expected, f"{spk.get('Executive', None)} vs {exec_expected}")
-            )
-            checks.append(
-                ("Analyst chunks = Q", spk.get("Analyst", None) == analyst_expected, f"{spk.get('Analyst', None)} vs {analyst_expected}")
-            )
-
-    check_df = pd.DataFrame(checks, columns=["Check", "Pass", "Value"])
-    print_df(check_df, decimals=6, index=False)
+    print_title("Basic checks")
+    print_df(pd.DataFrame(checks, columns=["Check", "Pass", "Value"]), decimals=6, index=False)
 
 
-def main():
+def latex_block(title: str, df: pd.DataFrame, *, index: bool = True, float_format: str = "%.4f") -> str:
+    return f"% {title}\n" + df.to_latex(index=index, float_format=float_format)
+
+
+def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     final_df = load_final_data()
     chunk_df = load_chunk_data()
 
-    sample_overview, firm_quarter_distribution = build_sample_overview(final_df)
-    section_distribution = build_section_distribution(chunk_df)
-    speaker_distribution = build_speaker_role_distribution(chunk_df)
+    sample_overview, firm_coverage = build_sample_overview(final_df)
+    section_dist = build_distribution(chunk_df, "section", "Section")
+    speaker_dist = build_distribution(chunk_df, "speaker_role", "Speaker role")
     summary_table = build_summary_table(final_df, SUMMARY_VARS)
-    corr_table = build_correlation_table(final_df, CORR_VARS)
+    corr_table = build_corr_table(final_df, CORR_VARS)
+    measure_comparison = build_measure_comparison(final_df)
 
-    # Console output
-    print_title("Table 0 - Sample overview")
-    print_df(sample_overview, decimals=2, index=False)
+    tables = [
+        ("Table 0 - Sample overview", sample_overview, False, 2),
+        ("Table 0D - Firm-quarter coverage", firm_coverage, True, 2),
+        ("Table 0B - Section distribution", section_dist, False, 4),
+        ("Table 0C - Speaker role distribution", speaker_dist, False, 4),
+        ("Table 1 - Summary statistics", summary_table, True, 4),
+        ("Table 2 - Correlation matrix", corr_table, True, 4),
+        ("Appendix Table - Comparison of text measures", measure_comparison, False, 4),
+    ]
 
-    if firm_quarter_distribution is not None:
-        print_title("Table 0D - Firm-quarter coverage")
-        print_df(firm_quarter_distribution, decimals=2, index=True)
+    for title, df, use_index, dec in tables:
+        print_title(title)
+        print_df(df, decimals=dec, index=use_index)
 
-    if section_distribution is not None:
-        print_title("Table 0B - Section distribution")
-        print_df(section_distribution, decimals=4, index=False)
+    run_basic_checks(final_df, section_dist, speaker_dist)
 
-    if speaker_distribution is not None:
-        print_title("Table 0C - Speaker role distribution")
-        print_df(speaker_distribution, decimals=4, index=False)
-
-    print_title("Table 1 - Summary statistics")
-    print_df(summary_table, decimals=4, index=True)
-
-    print_title("Table 2 - Correlation matrix")
-    print_df(corr_table, decimals=4, index=True)
-
-    run_basic_checks(
-        final_df=final_df,
-        section_distribution=section_distribution,
-        speaker_distribution=speaker_distribution,
-    )
-
-    # File export
-    output_lines: list[str] = []
-
-    output_lines.append("% TABLE 0: Sample overview")
-    output_lines.append(sample_overview.to_latex(index=False))
-
-    if firm_quarter_distribution is not None:
-        output_lines.append("\n\n% TABLE 0D: Firm-quarter coverage")
-        output_lines.append(firm_quarter_distribution.to_latex(float_format="%.2f"))
-
-    if section_distribution is not None:
-        output_lines.append("\n\n% TABLE 0B: Section distribution")
-        output_lines.append(section_distribution.to_latex(index=False, float_format="%.4f"))
-
-    if speaker_distribution is not None:
-        output_lines.append("\n\n% TABLE 0C: Speaker role distribution")
-        output_lines.append(speaker_distribution.to_latex(index=False, float_format="%.4f"))
-
-    output_lines.append("\n\n% TABLE 1: Summary statistics")
-    output_lines.append(summary_table.to_latex(float_format="%.4f"))
-
-    output_lines.append("\n\n% TABLE 2: Correlation matrix")
-    output_lines.append(corr_table.to_latex(float_format="%.4f"))
+    latex_blocks = [
+        latex_block("TABLE 0: Sample overview", sample_overview, index=False, float_format="%.2f"),
+        latex_block("TABLE 0D: Firm-quarter coverage", firm_coverage, index=True, float_format="%.2f"),
+        latex_block("TABLE 0B: Section distribution", section_dist, index=False, float_format="%.4f"),
+        latex_block("TABLE 0C: Speaker role distribution", speaker_dist, index=False, float_format="%.4f"),
+        latex_block("TABLE 1: Summary statistics", summary_table, index=True, float_format="%.4f"),
+        latex_block("TABLE 2: Correlation matrix", corr_table, index=True, float_format="%.4f"),
+        latex_block("APPENDIX TABLE: Comparison of text measures", measure_comparison, index=False, float_format="%.4f"),
+    ]
 
     output_path = RESULTS_DIR / "descriptive_statistics.txt"
-    output_path.write_text("\n".join(output_lines), encoding="utf-8")
+    output_path.write_text("\n\n".join(latex_blocks), encoding="utf-8")
 
-    print()
-    print(f"Saved descriptive statistics to: {output_path}")
+    print(f"\nSaved descriptive statistics to: {output_path}")
 
 
 if __name__ == "__main__":
