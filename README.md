@@ -76,10 +76,9 @@ Chunk-level rows typically contain:
 
 These chunks are the base unit used later for labeling, fine-tuning, and inference.
 
-### 5. Filtering to the target universe
-The repository also includes filters to restrict the analysis to a target universe such as the S&P 500.
+The repository also includes a filtering step to restrict the analysis to a specific investment universe.
 
-This step is useful when the downstream financial analysis is meant to be run on a specific investment universe.
+In the current empirical design, this step is used to keep only firms belonging to the S&P 500 universe used in the final analysis.
 
 ### 6. Annotation sample creation
 Instead of labeling the full corpus directly, the project first creates an annotation sample.
@@ -208,9 +207,6 @@ Below is the project tree in logical package form, with the current scripts grou
 │   ├── pipeline.py
 │   └── main.py
 │
-├── filters/
-│   └── sp500_only.py
-│
 ├── llm_finetune/
 │   ├── config.py
 │   ├── dataset_builder.py
@@ -242,6 +238,7 @@ Below is the project tree in logical package form, with the current scripts grou
 │
 ├── utils/
 │   └── logger.py
+│   └── sp500_only.py
 │
 ├── models/
 │   └── finbert_finetuned/
@@ -258,85 +255,80 @@ Below is the project tree in logical package form, with the current scripts grou
 
 ## Detailed role of each part
 
+Main scripts:
+
 ### `scraping/`
 This folder handles transcript collection.
-
-Main scripts:
-- `scraper.py`: browser-based Koyfin transcript scraping logic
-- `selectors.py`: Selenium selectors used by the scraper
-- `storage.py`: parquet shard writer
-- `koyfin_helpers.py`: helper functions for navigation, waiting, and transcript extraction
-- `config.py`: scraping parameters, credentials, paths, and scraping windows
-- `main.py`: launch point for scraping
-
-### `preprocessing/`
-This folder transforms raw transcripts into clean structured chunk datasets.
-
-Main scripts:
-- `merge_raw_parquets.py`: merges raw transcript shards and cleans invalid dates
-- `parsing.py`: extracts speaker and transcript metadata
-- `enrichment.py`: enriches company metadata and normalizes firm names
-- `data_io.py`: parquet loading/saving helpers
-- `validation.py`: transcript quality and section-balance checks
-- `chunking.py`: chunk generation using a FinBERT tokenizer
-- `pipeline.py`: end-to-end preprocessing flow
-- `config.py`: preprocessing paths and parameters
-- `main.py`: launch point for preprocessing
-
-### `filters/`
-This folder contains filtering scripts for universe selection.
-
-Main script:
-- `sp500_only.py`: restricts segments and chunks to S&P 500 companies
+* `merge_raw_parquets.py`: merges raw transcript shards and cleans invalid dates
+* `parsing.py`: extracts speaker and transcript metadata
+* `enrichment.py`: enriches company metadata and normalizes firm names
+* `data_io.py`: parquet loading/saving helpers
+* `validation.py`: transcript quality and section-balance checks
+* `chunking.py`: chunk generation using a transformer-compatible tokenizer
+* `pipeline.py`: end-to-end preprocessing flow
+* `config.py`: preprocessing paths and parameters
+* `main.py`: launch point for preprocessing
 
 ### `llm_finetune/`
+
 This folder contains the full model-training workflow.
 
 Main scripts:
-- `config.py`: paths, prompt, sampling parameters, and training hyperparameters
-- `dataset_builder.py`: builds the annotation sample from chunked transcripts
-- `llm_labeler.py`: labels chunks using an LLM API
-- `train.py`: fine-tunes FinBERT on the labeled dataset
-- `search_hparams.py`: hyperparameter search on the training dataset only
-- `read_results.py`: reads metrics and evaluation predictions
-- `export_prompt_examples.py`: exports informative misclassification examples for prompt analysis
-- `main.py`: orchestrates the full build / label / train workflow
+
+* `config.py`: paths, prompt, sampling parameters, and training hyperparameters
+* `dataset_builder.py`: builds the annotation sample from chunked transcripts
+* `llm_labeler.py`: labels chunks using an LLM API
+* `train.py`: fine-tunes FinBERT on the labeled dataset
+* `search_hparams.py`: hyperparameter search on the training dataset
+* `read_results.py`: reads metrics and evaluation predictions
+* `export_prompt_examples.py`: exports informative prediction examples for prompt analysis
+* `main.py`: orchestrates the full build / label / train workflow
 
 ### `scoring/`
+
 This folder applies the selected sentiment model to the full chunk dataset.
 
 Main scripts:
-- `config.py`: input path, output path, scoring model, batch size, filtering flags
-- `finbert_scorer.py`: tokenizer/model loading and batch scoring
-- `pipeline.py`: chunk preparation, batching, and parquet writing
-- `main.py`: launch point for scoring
+
+* `config.py`: input path, output path, scoring model, batch size, and filtering flags
+* `finbert_scorer.py`: tokenizer / model loading and batch scoring
+* `pipeline.py`: chunk preparation, batching, and parquet writing
+* `main.py`: launch point for scoring
 
 ### `features/`
+
 This folder converts chunk-level outputs into transcript-level variables and builds the final regression dataset.
 
 Main scripts:
-- `config.py`: paths to scored chunks and external data
-- `text_features.py`: computes `neg_score` and aggregates transcript features
-- `market_features.py`: loads and joins market and earnings features
-- `regression_prep.py`: winsorization, logs, filtering, and final prep
-- `pipeline.py`: full feature-engineering pipeline
-- `main.py`: launch point for feature generation
+
+* `config.py`: paths to scored chunks and external data
+* `text_features.py`: computes `NegScore` and aggregates transcript-level tone features
+* `market_features.py`: loads and joins market and accounting variables
+* `regression_prep.py`: final cleaning, transformations, and regression-dataset preparation
+* `pipeline.py`: full feature-engineering pipeline
+* `main.py`: launch point for feature generation
 
 ### `regressions/`
-This folder contains the econometric analysis stage.
+
+This folder contains the econometric analysis and empirical diagnostics.
 
 Main scripts:
-- `config.py`: regression dataset path and results folder
-- `pipeline.py`: model formulas, controls, fixed effects, clustering, and result tables
-- `main.py`: launch point for regressions
+
+* `config.py`: regression dataset path and results folder
+* `regression.py`: main specifications and robustness checks
+* `descriptive_stats.py`: descriptive tables and sample overview
+* `graphs.py`: descriptive and empirical figures
+* `model_check.py`: comparison and diagnostics for baseline vs fine-tuned models
 
 ### `utils/`
+
 Shared utilities used across stages.
 
-Main script:
-- `logger.py`: common logger configuration and handlers
+Main scripts:
 
----
+* `logger.py`: common logger configuration and handlers
+* `sp500_only.py`: restricts segments and chunks to the S&P 500 universe used in the final analysis
+
 
 ## Main outputs by stage
 
