@@ -119,19 +119,11 @@ def _sum_if_any(values: list[float]) -> float:
     return float(s.sum()) if s.notna().any() else np.nan
 
 
-def _abs_sum_if_any(values: list[float]) -> float:
-    s = pd.Series(values, dtype="float64")
-    return float(s.abs().sum()) if s.notna().any() else np.nan
-
-
-def _compute_expected_return(df: pd.DataFrame, pos: int) -> tuple[float, int]:
+def _compute_expected_return(df: pd.DataFrame, pos: int) -> float:
     est_window = _get_window_by_pos(df, pos, "ret", ESTIMATION_START, ESTIMATION_END).dropna()
-    n_obs = int(len(est_window))
-
-    if n_obs < MIN_ESTIMATION_OBS:
-        return np.nan, n_obs
-
-    return float(est_window.mean()), n_obs
+    if len(est_window) < MIN_ESTIMATION_OBS:
+        return np.nan
+    return float(est_window.mean())
 
 
 def _compute_event_returns(df: pd.DataFrame, pos: int) -> tuple[float, float, float]:
@@ -178,23 +170,14 @@ def build_market_event_features(df: pd.DataFrame, call_date: pd.Timestamp) -> di
         return {}
 
     ret_m1, ret_0, ret_1 = _compute_event_returns(df, pos)
-    mean_ret_est, n_estimation_obs = _compute_expected_return(df, pos)
+    mean_ret_est = _compute_expected_return(df, pos)
     ar_m1, ar_0, ar_1 = _compute_abnormal_returns(ret_m1, ret_0, ret_1, mean_ret_est)
 
     avgvol_m20_m1, avgvol_0_p1, abvol_0_p1 = _compute_volume_features(df, pos)
     volatility_0_p5 = _get_window_by_pos(df, pos, "ret", 0, 5).std(ddof=0)
 
     return {
-        "ret_m1": ret_m1,
-        "ret_0": ret_0,
-        "ret_1": ret_1,
-        "mean_ret_estimation": mean_ret_est,
-        "n_estimation_obs": float(n_estimation_obs),
-        "AR_m1": ar_m1,
-        "AR_0": ar_0,
-        "AR_1": ar_1,
         "CAR_m1_p1": _sum_if_any([ar_m1, ar_0, ar_1]),
-        "AbsRet_0_p1": _abs_sum_if_any([ar_0, ar_1]),
         "Volatility_0_p5": volatility_0_p5,
         "AvgVolume_m20_m1": avgvol_m20_m1,
         "AvgVolume_0_p1": avgvol_0_p1,
