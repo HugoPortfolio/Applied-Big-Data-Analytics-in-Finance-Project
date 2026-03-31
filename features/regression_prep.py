@@ -12,7 +12,7 @@ REQUIRED_COLS = [
     "AvgVolume_m20_m1",
 ]
 
-WINSOR_COLS = ["eps_surprise", "revenue_surprise", "AbVol_0_p1"]
+WINSOR_COLS = ["CAR_m1_p1","eps_surprise", "revenue_surprise", "AbVol_0_p1"]
 
 
 def winsorize(s: pd.Series, lower: float = 0.01, upper: float = 0.99) -> pd.Series:

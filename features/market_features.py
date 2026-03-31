@@ -9,6 +9,11 @@ MAX_EARNINGS_GAP_DAYS = 30
 MIN_ABS_EPS_EST = 0.01
 MIN_ABS_REV_EST = 1_000_000
 
+# Constant mean return model settings
+ESTIMATION_START = -250
+ESTIMATION_END = -50
+MIN_ESTIMATION_OBS = 60
+
 
 def normalize_ticker(value: str) -> str:
     return str(value).strip().upper().replace(".", "-")
@@ -40,68 +45,160 @@ def load_ticker_panel(folder: Path, ticker: str) -> pd.DataFrame:
         df["ticker"] = df["symbol"]
 
     if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
 
-    df["ticker_norm"] = df["ticker"].map(normalize_ticker)
+    if "ticker" in df.columns:
+        df["ticker_norm"] = df["ticker"].map(normalize_ticker)
+    else:
+        df["ticker_norm"] = normalize_ticker(ticker)
+
     return df
 
 
 def load_feature_base(path: Path) -> pd.DataFrame:
     df = pd.read_parquet(path).copy()
     df["ticker_norm"] = df["ticker"].map(normalize_ticker)
-    df["call_date"] = pd.to_datetime(df["date"]).dt.normalize()
+    df["call_date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
     return df
 
 
+def _prepare_market_panel(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = df.sort_values("date").copy()
+    out["close"] = pd.to_numeric(out["close"], errors="coerce")
+    out["volume"] = pd.to_numeric(out["volume"], errors="coerce")
+    out = out.dropna(subset=["date", "close"]).copy()
+
+    if out.empty:
+        return out
+
+    out["ret"] = np.log(out["close"] / out["close"].shift(1))
+    return out
+
+
+def _resolve_event_position(df: pd.DataFrame, call_date: pd.Timestamp) -> int | None:
+    exact_idx = df.index[df["date"] == call_date]
+    if len(exact_idx) > 0:
+        return int(df.index.get_loc(exact_idx[0]))
+
+    next_idx = df.index[df["date"] > call_date]
+    if len(next_idx) > 0:
+        return int(df.index.get_loc(next_idx[0]))
+
+    return None
+
+
+def _get_value_at_offset(df: pd.DataFrame, pos: int, col: str, offset: int) -> float:
+    j = pos + offset
+    if 0 <= j < len(df):
+        value = df.iloc[j][col]
+        return float(value) if pd.notna(value) else np.nan
+    return np.nan
+
+
+def _get_window_by_pos(df: pd.DataFrame, pos: int, col: str, start: int, end: int) -> pd.Series:
+    i0 = pos + start
+    i1 = pos + end + 1
+
+    if i1 <= 0 or i0 >= len(df):
+        return pd.Series(dtype="float64")
+
+    i0 = max(0, i0)
+    i1 = min(len(df), i1)
+
+    if i0 >= i1:
+        return pd.Series(dtype="float64")
+
+    return df.iloc[i0:i1][col]
+
+
+def _sum_if_any(values: list[float]) -> float:
+    s = pd.Series(values, dtype="float64")
+    return float(s.sum()) if s.notna().any() else np.nan
+
+
+def _abs_sum_if_any(values: list[float]) -> float:
+    s = pd.Series(values, dtype="float64")
+    return float(s.abs().sum()) if s.notna().any() else np.nan
+
+
+def _compute_expected_return(df: pd.DataFrame, pos: int) -> tuple[float, int]:
+    est_window = _get_window_by_pos(df, pos, "ret", ESTIMATION_START, ESTIMATION_END).dropna()
+    n_obs = int(len(est_window))
+
+    if n_obs < MIN_ESTIMATION_OBS:
+        return np.nan, n_obs
+
+    return float(est_window.mean()), n_obs
+
+
+def _compute_event_returns(df: pd.DataFrame, pos: int) -> tuple[float, float, float]:
+    ret_m1 = _get_value_at_offset(df, pos, "ret", -1)
+    ret_0 = _get_value_at_offset(df, pos, "ret", 0)
+    ret_1 = _get_value_at_offset(df, pos, "ret", 1)
+    return ret_m1, ret_0, ret_1
+
+
+def _compute_abnormal_returns(
+    ret_m1: float,
+    ret_0: float,
+    ret_1: float,
+    mean_ret_est: float,
+) -> tuple[float, float, float]:
+    if pd.isna(mean_ret_est):
+        return np.nan, np.nan, np.nan
+
+    ar_m1 = ret_m1 - mean_ret_est if pd.notna(ret_m1) else np.nan
+    ar_0 = ret_0 - mean_ret_est if pd.notna(ret_0) else np.nan
+    ar_1 = ret_1 - mean_ret_est if pd.notna(ret_1) else np.nan
+    return ar_m1, ar_0, ar_1
+
+
+def _compute_volume_features(df: pd.DataFrame, pos: int) -> tuple[float, float, float]:
+    avgvol_m20_m1 = _get_window_by_pos(df, pos, "volume", -20, -1).mean()
+    avgvol_0_p1 = _get_window_by_pos(df, pos, "volume", 0, 1).mean()
+
+    abvol_0_p1 = (
+        avgvol_0_p1 / avgvol_m20_m1
+        if pd.notna(avgvol_m20_m1) and avgvol_m20_m1 != 0
+        else np.nan
+    )
+    return avgvol_m20_m1, avgvol_0_p1, abvol_0_p1
+
+
 def build_market_event_features(df: pd.DataFrame, call_date: pd.Timestamp) -> dict[str, float]:
+    df = _prepare_market_panel(df)
     if df.empty:
         return {}
 
-    df = df.sort_values("date").copy()
-    df["close"] = pd.to_numeric(df["close"], errors="coerce")
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
-    df = df.dropna(subset=["date", "close"]).copy()
-    if df.empty:
+    pos = _resolve_event_position(df, call_date)
+    if pos is None:
         return {}
 
-    df["ret"] = df["close"].pct_change()
+    ret_m1, ret_0, ret_1 = _compute_event_returns(df, pos)
+    mean_ret_est, n_estimation_obs = _compute_expected_return(df, pos)
+    ar_m1, ar_0, ar_1 = _compute_abnormal_returns(ret_m1, ret_0, ret_1, mean_ret_est)
 
-    idx = df.index[df["date"] == call_date]
-    if len(idx) == 0:
-        idx = df.index[df["date"] > call_date]
-        if len(idx) == 0:
-            return {}
-
-    pos = df.index.get_loc(idx[0])
-
-    def get_ret(offset: int) -> float:
-        j = pos + offset
-        if 0 <= j < len(df):
-            value = df.iloc[j]["ret"]
-            return float(value) if pd.notna(value) else np.nan
-        return np.nan
-
-    def get_window(col: str, start: int, end: int) -> pd.Series:
-        i0 = max(0, pos + start)
-        i1 = min(len(df), pos + end + 1)
-        return df.iloc[i0:i1][col]
-
-    ret_m1, ret_0, ret_1 = get_ret(-1), get_ret(0), get_ret(1)
-    avgvol_m20_m1 = get_window("volume", -20, -1).mean()
-    avgvol_0_p1 = get_window("volume", 0, 1).mean()
+    avgvol_m20_m1, avgvol_0_p1, abvol_0_p1 = _compute_volume_features(df, pos)
+    volatility_0_p5 = _get_window_by_pos(df, pos, "ret", 0, 5).std(ddof=0)
 
     return {
         "ret_m1": ret_m1,
         "ret_0": ret_0,
         "ret_1": ret_1,
-        "CAR_m1_p1": np.nansum([ret_m1, ret_0, ret_1]),
-        "AbsRet_0_p1": np.nansum(np.abs([ret_0, ret_1])),
-        "Volatility_0_p5": get_window("ret", 0, 5).std(ddof=0),
+        "mean_ret_estimation": mean_ret_est,
+        "n_estimation_obs": float(n_estimation_obs),
+        "AR_m1": ar_m1,
+        "AR_0": ar_0,
+        "AR_1": ar_1,
+        "CAR_m1_p1": _sum_if_any([ar_m1, ar_0, ar_1]),
+        "AbsRet_0_p1": _abs_sum_if_any([ar_0, ar_1]),
+        "Volatility_0_p5": volatility_0_p5,
         "AvgVolume_m20_m1": avgvol_m20_m1,
         "AvgVolume_0_p1": avgvol_0_p1,
-        "AbVol_0_p1": avgvol_0_p1 / avgvol_m20_m1
-        if pd.notna(avgvol_m20_m1) and avgvol_m20_m1 != 0
-        else np.nan,
+        "AbVol_0_p1": abvol_0_p1,
     }
 
 
@@ -109,15 +206,15 @@ def build_marketcap_feature(df: pd.DataFrame, call_date: pd.Timestamp) -> dict[s
     if df.empty:
         return {}
 
-    df = df.sort_values("date").copy()
-    df["marketCap"] = pd.to_numeric(df["marketCap"], errors="coerce")
-    df = df.dropna(subset=["date", "marketCap"])
-    df = df[df["date"] <= call_date]
+    out = df.sort_values("date").copy()
+    out["marketCap"] = pd.to_numeric(out["marketCap"], errors="coerce")
+    out = out.dropna(subset=["date", "marketCap"])
+    out = out[out["date"] <= call_date]
 
-    if df.empty:
+    if out.empty:
         return {}
 
-    market_cap = float(df.iloc[-1]["marketCap"])
+    market_cap = float(out.iloc[-1]["marketCap"])
     return {
         "marketCap": market_cap,
         "log_marketCap": np.log(market_cap) if market_cap > 0 else np.nan,
@@ -128,18 +225,18 @@ def build_earning_feature(df: pd.DataFrame, call_date: pd.Timestamp) -> dict[str
     if df.empty:
         return {}
 
-    df = df.sort_values("date").copy()
+    out = df.sort_values("date").copy()
 
     for col in ["epsEstimated", "epsActual", "revenueEstimated", "revenueActual"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
 
-    df = df.dropna(subset=["date"])
-    df = df[df["date"] <= call_date]
-    if df.empty:
+    out = out.dropna(subset=["date"])
+    out = out[out["date"] <= call_date]
+    if out.empty:
         return {}
 
-    row = df.iloc[-1]
+    row = out.iloc[-1]
     earnings_date = pd.to_datetime(row["date"]).normalize()
 
     if (call_date - earnings_date).days > MAX_EARNINGS_GAP_DAYS:
@@ -153,8 +250,22 @@ def build_earning_feature(df: pd.DataFrame, call_date: pd.Timestamp) -> dict[str
             "revenue_surprise": np.nan,
         }
 
-    eps_est, eps_act = row.get("epsEstimated", np.nan), row.get("epsActual", np.nan)
-    rev_est, rev_act = row.get("revenueEstimated", np.nan), row.get("revenueActual", np.nan)
+    eps_est = row.get("epsEstimated", np.nan)
+    eps_act = row.get("epsActual", np.nan)
+    rev_est = row.get("revenueEstimated", np.nan)
+    rev_act = row.get("revenueActual", np.nan)
+
+    eps_surprise = (
+        (eps_act - eps_est) / abs(eps_est)
+        if pd.notna(eps_est) and pd.notna(eps_act) and abs(eps_est) >= MIN_ABS_EPS_EST
+        else np.nan
+    )
+
+    revenue_surprise = (
+        (rev_act - rev_est) / abs(rev_est)
+        if pd.notna(rev_est) and pd.notna(rev_act) and abs(rev_est) >= MIN_ABS_REV_EST
+        else np.nan
+    )
 
     return {
         "earnings_date": earnings_date,
@@ -162,12 +273,8 @@ def build_earning_feature(df: pd.DataFrame, call_date: pd.Timestamp) -> dict[str
         "epsActual": eps_act,
         "revenueEstimated": rev_est,
         "revenueActual": rev_act,
-        "eps_surprise": (eps_act - eps_est) / abs(eps_est)
-        if pd.notna(eps_est) and pd.notna(eps_act) and abs(eps_est) >= MIN_ABS_EPS_EST
-        else np.nan,
-        "revenue_surprise": (rev_act - rev_est) / abs(rev_est)
-        if pd.notna(rev_est) and pd.notna(rev_act) and abs(rev_est) >= MIN_ABS_REV_EST
-        else np.nan,
+        "eps_surprise": eps_surprise,
+        "revenue_surprise": revenue_surprise,
     }
 
 
@@ -190,7 +297,8 @@ def build_regression_dataset(
     total = len(df_features)
 
     for i, row in enumerate(df_features.itertuples(index=False), start=1):
-        ticker, call_date = row.ticker_norm, row.call_date
+        ticker = row.ticker_norm
+        call_date = row.call_date
         out = row._asdict()
 
         out.update(build_market_event_features(get_panel("market", market_dir, ticker), call_date))
