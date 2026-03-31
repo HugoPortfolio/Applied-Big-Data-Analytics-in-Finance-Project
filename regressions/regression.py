@@ -70,6 +70,24 @@ def fit_model(
     return model.fit()
 
 
+def significance_stars(p: float) -> str:
+    if pd.isna(p):
+        return ""
+    if p < 0.01:
+        return "***"
+    if p < 0.05:
+        return "**"
+    if p < 0.10:
+        return "*"
+    return ""
+
+
+def format_coef_with_stars(coef: float, p: float) -> str:
+    if pd.isna(coef):
+        return ""
+    return f"{coef:.4f}{significance_stars(p)}"
+
+
 def format_pvalue(p: float) -> str:
     if pd.isna(p):
         return ""
@@ -101,6 +119,7 @@ def escape_latex(text: str) -> str:
 
 def get_rename_map() -> dict[str, str]:
     return {
+        "Intercept": "Constant",
         "NegPrepared": "Prepared Negativity",
         "NegGap": "Negative Gap",
         "NegQA": "Q&A Negativity",
@@ -118,13 +137,17 @@ def get_rename_map() -> dict[str, str]:
     }
 
 
+def get_vars_to_show(main_vars: list[str]) -> list[str]:
+    return ["Intercept"] + main_vars + CONTROLS
+
+
 def print_result(title: str, result, main_vars: list[str]) -> str:
-    vars_to_show = main_vars + CONTROLS
+    vars_to_show = get_vars_to_show(main_vars)
 
     lines = []
     lines.append(f"{title} | CAR[-1,+1]")
-    lines.append("Variable                                 Coef.    Std.Err.    t-stat   p-value")
-    lines.append("------------------------------------------------------------------------------")
+    lines.append("Variable                                 Coef.         Std.Err.    t-stat   p-value")
+    lines.append("--------------------------------------------------------------------------------------")
 
     rename_map = get_rename_map()
 
@@ -134,18 +157,20 @@ def print_result(title: str, result, main_vars: list[str]) -> str:
         tval = result.tvalues.get(var, np.nan)
         pval = result.pvalues.get(var, np.nan)
 
+        coef_str = format_coef_with_stars(coef, pval)
         lines.append(
             f"{rename_map.get(var, var):35s}"
-            f"{coef:10.4f}{se:11.4f}{tval:10.2f}{format_pvalue(pval):>10s}"
+            f"{coef_str:14s}{se:12.4f}{tval:10.2f}{format_pvalue(pval):>10s}"
         )
 
-    lines.append("------------------------------------------------------------------------------")
+    lines.append("--------------------------------------------------------------------------------------")
     lines.append(
         f"N = {int(result.nobs):,}   "
         f"R-squared = {result.rsquared:.3f}   "
         f"Adj. R-squared = {result.rsquared_adj:.3f}"
     )
     lines.append(f"Covariance: {result.cov_type}")
+    lines.append("Significance: *** p<0.01, ** p<0.05, * p<0.10")
     return "\n".join(lines)
 
 
@@ -170,7 +195,7 @@ def make_table_label(title: str) -> str:
 
 
 def latex_result_table(title: str, result, main_vars: list[str]) -> str:
-    vars_to_show = main_vars + CONTROLS
+    vars_to_show = get_vars_to_show(main_vars)
     rename_map = get_rename_map()
 
     cov_label = result.cov_type
@@ -196,8 +221,10 @@ def latex_result_table(title: str, result, main_vars: list[str]) -> str:
         pval = result.pvalues.get(var, np.nan)
 
         display_name = escape_latex(rename_map.get(var, var))
+        coef_str = escape_latex(format_coef_with_stars(coef, pval))
+
         lines.append(
-            rf"{display_name} & {coef:.4f} & {se:.4f} & {tval:.2f} & {format_pvalue_latex(pval)} \\"
+            rf"{display_name} & {coef_str} & {se:.4f} & {tval:.2f} & {format_pvalue_latex(pval)} \\"
         )
 
     lines.append(r"\hline")
@@ -207,7 +234,7 @@ def latex_result_table(title: str, result, main_vars: list[str]) -> str:
     lines.append(r"\begin{minipage}{0.9\linewidth}")
     lines.append(r"\footnotesize")
     lines.append(
-        rf"\textit{{Notes.}} $N = {nobs:,}$, $R^2 = {r2:.3f}$, adjusted $R^2 = {adj_r2:.3f}$. Covariance estimator: {escape_latex(cov_label)}."
+        rf"\textit{{Notes.}} $N = {nobs:,}$, $R^2 = {r2:.3f}$, adjusted $R^2 = {adj_r2:.3f}$. Covariance estimator: {escape_latex(cov_label)}. Significance levels: *** $p<0.01$, ** $p<0.05$, * $p<0.10$."
     )
     lines.append(r"\end{minipage}")
     lines.append(r"\end{table}")
@@ -216,6 +243,8 @@ def latex_result_table(title: str, result, main_vars: list[str]) -> str:
 
 
 def latex_wald_table(wald: dict) -> str:
+    coef_str = escape_latex(format_coef_with_stars(wald["coef_diff"], wald["p_value"]))
+
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"\centering")
@@ -228,13 +257,19 @@ def latex_wald_table(wald: dict) -> str:
     lines.append(r"\hline")
     lines.append(
         rf"{escape_latex(wald['hypothesis'])} & "
-        rf"{wald['coef_diff']:.4f} & "
+        rf"{coef_str} & "
         rf"{wald['std_err']:.4f} & "
         rf"{wald['t_stat']:.2f} & "
         rf"{format_pvalue_latex(wald['p_value'])} \\"
     )
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
+    lines.append(r"")
+    lines.append(r"\vspace{0.3em}")
+    lines.append(r"\begin{minipage}{0.9\linewidth}")
+    lines.append(r"\footnotesize")
+    lines.append(r"\textit{Notes.} Significance levels: *** $p<0.01$, ** $p<0.05$, * $p<0.10$.")
+    lines.append(r"\end{minipage}")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
@@ -326,13 +361,14 @@ def run_progressive_specs(df: pd.DataFrame) -> list[tuple[str, object, list[str]
 def print_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
     lines = []
     lines.append("Progressive specifications | CAR[-1,+1]")
-    lines.append("-" * 122)
+    lines.append("-" * 145)
 
     headers = ["Variable"] + [title for title, _, _ in specs]
-    lines.append(f"{headers[0]:30s}" + "".join(f"{h:>18s}" for h in headers[1:]))
-    lines.append("-" * 122)
+    lines.append(f"{headers[0]:30s}" + "".join(f"{h:>23s}" for h in headers[1:]))
+    lines.append("-" * 145)
 
     vars_to_show = [
+        "Intercept",
         "NegGap",
         "NegPrepared",
         "eps_surprise",
@@ -346,18 +382,36 @@ def print_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
 
     for var in vars_to_show:
         row = f"{rename_map.get(var, var):30s}"
+        has_any = False
         for _, res, _ in specs:
             coef = res.params.get(var, np.nan)
-            row += f"{coef:18.4f}" if not pd.isna(coef) else f"{'':>18s}"
-        lines.append(row)
+            pval = res.pvalues.get(var, np.nan)
+            coef_str = format_coef_with_stars(coef, pval)
+            if coef_str:
+                has_any = True
+            row += f"{coef_str:>23s}" if coef_str else f"{'':>23s}"
+        if has_any:
+            lines.append(row)
 
-        row_se = f"{'':30s}"
-        for _, res, _ in specs:
-            se = res.bse.get(var, np.nan)
-            row_se += f"({se:.4f})".rjust(18) if not pd.isna(se) else f"{'':>18s}"
-        lines.append(row_se)
+            row_se = f"{'':30s}"
+            for _, res, _ in specs:
+                se = res.bse.get(var, np.nan)
+                row_se += f"({se:.4f})".rjust(23) if not pd.isna(se) else f"{'':>23s}"
+            lines.append(row_se)
 
-    lines.append("-" * 122)
+            row_p = f"{'p-value':30s}"
+            vals = []
+            has_p = False
+            for _, res, _ in specs:
+                pval = res.pvalues.get(var, np.nan)
+                sval = format_pvalue(pval) if not pd.isna(pval) else ""
+                vals.append(sval)
+                if sval:
+                    has_p = True
+            if has_p:
+                lines.append(row_p + "".join(f"{v:>23s}" for v in vals))
+
+    lines.append("-" * 145)
 
     for stat_name, getter in [
         ("Observations", lambda r: f"{int(r.nobs):,}"),
@@ -366,9 +420,10 @@ def print_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
     ]:
         row = f"{stat_name:30s}"
         for _, res, _ in specs:
-            row += f"{getter(res):>18s}"
+            row += f"{getter(res):>23s}"
         lines.append(row)
 
+    lines.append("Significance: *** p<0.01, ** p<0.05, * p<0.10")
     return "\n".join(lines)
 
 
@@ -377,6 +432,7 @@ def latex_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
     headers = " & ".join([escape_latex(title) for title, _, _ in specs])
 
     vars_to_show = [
+        "Intercept",
         "NegGap",
         "NegPrepared",
         "eps_surprise",
@@ -402,13 +458,29 @@ def latex_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
     for var in vars_to_show:
         coef_row = [escape_latex(rename_map.get(var, var))]
         se_row = [""]
+        p_row = ["p-value"]
+        has_any = False
+
         for _, res, _ in specs:
             coef = res.params.get(var, np.nan)
             se = res.bse.get(var, np.nan)
-            coef_row.append("" if pd.isna(coef) else f"{coef:.4f}")
-            se_row.append("" if pd.isna(se) else f"({se:.4f})")
-        lines.append(" & ".join(coef_row) + r" \\")
-        lines.append(" & ".join(se_row) + r" \\")
+            pval = res.pvalues.get(var, np.nan)
+
+            coef_txt = "" if pd.isna(coef) else escape_latex(format_coef_with_stars(coef, pval))
+            se_txt = "" if pd.isna(se) else f"({se:.4f})"
+            p_txt = "" if pd.isna(pval) else format_pvalue_latex(pval)
+
+            if coef_txt:
+                has_any = True
+
+            coef_row.append(coef_txt)
+            se_row.append(se_txt)
+            p_row.append(p_txt)
+
+        if has_any:
+            lines.append(" & ".join(coef_row) + r" \\")
+            lines.append(" & ".join(se_row) + r" \\")
+            lines.append(" & ".join(p_row) + r" \\")
 
     lines.append(r"\hline")
 
@@ -428,7 +500,7 @@ def latex_progressive_table(specs: list[tuple[str, object, list[str]]]) -> str:
     lines.append(r"\vspace{0.3em}")
     lines.append(r"\begin{minipage}{0.9\linewidth}")
     lines.append(r"\footnotesize")
-    lines.append(r"\textit{Notes.} The dependent variable is cumulative abnormal return over the $[-1,+1]$ window around the call date. Clustered standard errors at the firm level are reported in parentheses.")
+    lines.append(r"\textit{Notes.} The dependent variable is cumulative abnormal return over the $[-1,+1]$ window around the call date. Clustered standard errors at the firm level are reported in parentheses. Significance levels: *** $p<0.01$, ** $p<0.05$, * $p<0.10$.")
     lines.append(r"\end{minipage}")
     lines.append(r"\end{table}")
 
@@ -445,7 +517,6 @@ def main():
 
     specs: list[tuple[str, object, list[str]]] = []
 
-    # Baseline
     res_main, txt_main = run_spec(
         df=df,
         title="Main",
@@ -455,7 +526,6 @@ def main():
     output_blocks.append(txt_main)
     specs.append(("Main", res_main, ["NegPrepared", "NegGap"]))
 
-    # Prepared + Q&A
     res_joint, txt_joint = run_spec(
         df=df,
         title="Prepared + Q&A",
@@ -465,7 +535,6 @@ def main():
     output_blocks.append(txt_joint)
     specs.append(("Prepared + Q&A", res_joint, ["NegPrepared", "NegQA"]))
 
-    # Firm FE
     res_fe, txt_fe = run_spec(
         df=df,
         title="Firm FE",
@@ -476,7 +545,6 @@ def main():
     output_blocks.append(txt_fe)
     specs.append(("Firm FE", res_fe, ["NegPrepared", "NegGap"]))
 
-    # HC1
     res_hc1, txt_hc1 = run_spec(
         df=df,
         title="HC1 SE",
@@ -486,7 +554,6 @@ def main():
     output_blocks.append(txt_hc1)
     specs.append(("HC1 SE", res_hc1, ["NegPrepared", "NegGap"]))
 
-    # Trimmed
     res_trim, txt_trim = run_trimmed_spec(
         df=df,
         title="Trimmed",
@@ -495,7 +562,6 @@ def main():
     output_blocks.append(txt_trim)
     specs.append(("Trimmed", res_trim, ["NegPrepared", "NegGap"]))
 
-    # Long Q&A
     res_long, txt_long = run_long_qa_spec(
         df=df,
         title="Long Q&A",
@@ -504,7 +570,6 @@ def main():
     output_blocks.append(txt_long)
     specs.append(("Long Q&A", res_long, ["NegPrepared", "NegGap"]))
 
-    # Robustness: segment-length weighted
     res_seglenw, txt_seglenw = run_spec(
         df=df,
         title="Segment-length weighted",
@@ -514,7 +579,6 @@ def main():
     output_blocks.append(txt_seglenw)
     specs.append(("Segment-length weighted", res_seglenw, ["NegPrepared_seglenw", "NegGap_seglenw"]))
 
-    # Robustness: most negative portion of response
     res_segmax, txt_segmax = run_spec(
         df=df,
         title="Most negative response portion",
@@ -524,7 +588,6 @@ def main():
     output_blocks.append(txt_segmax)
     specs.append(("Most negative response portion", res_segmax, ["NegPrepared_segmax", "NegGap_segmax"]))
 
-    # Joint robustness: segment-length weighted
     res_joint_seglenw, txt_joint_seglenw = run_spec(
         df=df,
         title="Prepared + Q&A | segment-length weighted",
@@ -534,7 +597,6 @@ def main():
     output_blocks.append(txt_joint_seglenw)
     specs.append(("Prepared + Q&A | segment-length weighted", res_joint_seglenw, ["NegPrepared_seglenw", "NegQA_seglenw"]))
 
-    # Joint robustness: most negative response portion
     res_joint_segmax, txt_joint_segmax = run_spec(
         df=df,
         title="Prepared + Q&A | most negative response portion",
@@ -544,17 +606,15 @@ def main():
     output_blocks.append(txt_joint_segmax)
     specs.append(("Prepared + Q&A | most negative response portion", res_joint_segmax, ["NegPrepared_segmax", "NegQA_segmax"]))
 
-    # Progressive specifications
     progressive_specs = run_progressive_specs(df)
     txt_progressive = print_progressive_table(progressive_specs)
     output_blocks.append(txt_progressive)
 
-    # Wald test on main joint spec
     wald = wald_test_diff(res_joint, "NegQA", "NegPrepared")
     output_blocks.append("Wald test on main outcome")
     output_blocks.append(str(wald))
+    output_blocks.append("Significance: *** p<0.01, ** p<0.05, * p<0.10")
 
-    # Console/text output
     full_output = "\n\n".join(output_blocks)
     print(full_output)
 
@@ -562,7 +622,6 @@ def main():
     out_txt_path.write_text(full_output, encoding="utf-8")
     print(f"Saved single export: {out_txt_path}")
 
-    # LaTeX output
     for title, result, main_vars in specs:
         latex_blocks.append(latex_result_table(title, result, main_vars))
 
